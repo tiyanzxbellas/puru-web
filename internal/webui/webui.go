@@ -10,6 +10,9 @@
 //	POST   /api/clear        → clear history
 //	POST   /api/new_chat     → start a new chat slot
 //	GET    /api/chats        → list chat slots
+//	POST   /api/upload       -> upload a file for the agent (multipart field file)
+//	GET    /api/files        -> list files under the workspace downloads/ folder
+//	GET    /api/file?path=   -> download one of those files (downloads/ only)
 //
 // The engine is identical to the CLI/Telegram path: Agent.ProcessMessage
 // with history.Store, memory compaction, prompt.Get system prompt, skills.
@@ -21,12 +24,17 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +55,10 @@ var indexHTML []byte
 const DefaultWebChatID int64 = 9000000001
 
 // maxMessageBytes caps a single user message.
-const maxMessageBytes = 32 << 10
+const maxMessageBytes = 256 << 10
+
+// maxUploadBytes caps one uploaded file (same 20MB ceiling as Telegram).
+const maxUploadBytes = 20 << 20
 
 // maxRun caps one agent run so a hung model call never wedges the slot.
 const maxRun = 10 * time.Minute
@@ -62,6 +73,9 @@ type Server struct {
 
 	mu   sync.Mutex
 	busy map[int64]bool // chatID → running
+
+	filesMu sync.Mutex
+	files   map[int64][]SentFile // chatID → files pushed by the agent
 }
 
 // New builds the web server. system is the rendered system prompt (used
@@ -74,6 +88,7 @@ func New(agent *ai.Agent, hist *history.Store, mem *memory.Manager, cfg *config.
 		cfg:    cfg,
 		system: system,
 		busy:   map[int64]bool{},
+		files:  map[int64][]SentFile{},
 	}
 }
 
@@ -89,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/clear", s.handleClear)
 	mux.HandleFunc("/api/new_chat", s.handleNewChat)
 	mux.HandleFunc("/api/chats", s.handleChats)
+	mux.HandleFunc("/api/upload", s.handleUpload)
+	mux.HandleFunc("/api/files", s.handleFiles)
+	mux.HandleFunc("/api/file", s.handleFile)
 	mux.HandleFunc("/", s.handleIndex)
 	return mux
 }
@@ -174,6 +192,13 @@ func viewMessages(stored []*messages.Message) []msgView {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
+		// Satu run agent bisa menghasilkan banyak pesan assistant (narasi
+		// antar tool-call). UI cukup menampilkan jawaban FINAL tiap run,
+		// biar tidak tampil sebagai balasan pendek-pendek.
+		if n := len(out); n > 0 && out[n-1].Role == "assistant" && m.Role == "assistant" {
+			out[n-1].Content = txt
+			continue
+		}
 		out = append(out, msgView{Role: m.Role, Content: txt})
 	}
 	return out
@@ -213,12 +238,13 @@ type chatReq struct {
 }
 
 type chatResp struct {
-	OK         bool   `json:"ok"`
-	Reply      string `json:"reply"`
-	Tokens     int    `json:"tokens"`
-	HistTokens int    `json:"hist_tokens"`
-	ChatID     int64  `json:"chat_id"`
-	DurationMs int64  `json:"duration_ms"`
+	OK         bool       `json:"ok"`
+	Reply      string     `json:"reply"`
+	Tokens     int        `json:"tokens"`
+	HistTokens int        `json:"hist_tokens"`
+	ChatID     int64      `json:"chat_id"`
+	DurationMs int64      `json:"duration_ms"`
+	Files      []SentFile `json:"files,omitempty"`
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -266,6 +292,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 	stored := s.hist.Get(chatID)
+	filesBefore := len(s.sentFiles(chatID))
 
 	// compaction (same as the CLI path)
 	if history.TokenCountFull(s.system, stored) >= s.cfg.HistoryTokenLimit && len(stored) > 0 {
@@ -302,6 +329,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Reply:      strings.TrimSpace(res.Text),
 		Tokens:     res.TotalTokens,
 		HistTokens: history.TokenCountFull(s.system, saved),
+		Files:      s.newFiles(chatID, filesBefore),
 		ChatID:     chatID,
 		DurationMs: time.Since(start).Milliseconds(),
 	})
@@ -414,4 +442,248 @@ func trimTitle(s string) string {
 // TokensOf counts the history tokens of a chat slot (tests/debug).
 func (s *Server) TokensOf(chatID int64) int {
 	return tokens.CountConversation(s.hist.Get(chatID))
+}
+
+// ---------- files (upload / download bridge) ----------
+
+// SentFile is one file pushed by the agent into a web chat.
+type SentFile struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	URL     string `json:"url"`
+	Size    int64  `json:"size"`
+	Caption string `json:"caption,omitempty"`
+	Time    string `json:"time"`
+}
+
+func (s *Server) downloadsDir() string { return filepath.Join(s.cfg.Workspace, "downloads") }
+func (s *Server) webDir() string       { return filepath.Join(s.downloadsDir(), "web") }
+func (s *Server) uploadsDir() string   { return filepath.Join(s.downloadsDir(), "uploads") }
+
+// SendFile makes telegram_sendfile work on the web channel: the file is stored
+// under downloads/web/ and offered to the browser as a download chip.
+func (s *Server) SendFile(ctx context.Context, chatID int64, filename string, data []byte, caption string) error {
+	if s == nil || s.cfg == nil {
+		return errors.New("web ui belum siap")
+	}
+	if len(data) > maxUploadBytes {
+		return fmt.Errorf("file %s terlalu besar (maks %d MB)", filename, maxUploadBytes>>20)
+	}
+	name := filepath.Base(strings.TrimSpace(filename))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "file.bin"
+	}
+	dir := s.webDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	stored := fmt.Sprintf("%s-%s", time.Now().Format("20060102-150405"), name)
+	if err := os.WriteFile(filepath.Join(dir, stored), data, 0o644); err != nil {
+		return err
+	}
+	rel := path.Join("web", stored)
+	sf := SentFile{
+		Name:    name,
+		Path:    rel,
+		URL:     "/api/file?path=" + url.QueryEscape(rel),
+		Size:    int64(len(data)),
+		Caption: caption,
+		Time:    time.Now().Format("02 Jan 15:04"),
+	}
+	s.filesMu.Lock()
+	s.files[chatID] = append(s.files[chatID], sf)
+	s.filesMu.Unlock()
+	log.Printf("webui sendfile: chat %d <- %s (%d bytes)", chatID, name, len(data))
+	return nil
+}
+
+// GetTelegramUser is part of ai.TelegramClient; Telegram-only by nature.
+func (s *Server) GetTelegramUser(ctx context.Context, userID int64) (*ai.TelegramUserInfo, error) {
+	return nil, errors.New("telegram_getuser cuma jalan di chat Telegram")
+}
+
+func (s *Server) sentFiles(chatID int64) []SentFile {
+	s.filesMu.Lock()
+	defer s.filesMu.Unlock()
+	out := make([]SentFile, len(s.files[chatID]))
+	copy(out, s.files[chatID])
+	return out
+}
+
+func (s *Server) newFiles(chatID int64, from int) []SentFile {
+	all := s.sentFiles(chatID)
+	if from < 0 || from > len(all) {
+		return nil
+	}
+	return all[from:]
+}
+
+// resolveDownloadsFile maps a downloads/-relative path to a real path and
+// refuses anything outside downloads/.
+func (s *Server) resolveDownloadsFile(rel string) (string, error) {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return "", errors.New("path kosong")
+	}
+	rel = strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(rel)), "/")
+	base := s.downloadsDir()
+	full := filepath.Join(base, filepath.FromSlash(rel))
+	if full != base && !strings.HasPrefix(full, base+string(os.PathSeparator)) {
+		return "", errors.New("path di luar folder downloads")
+	}
+	return full, nil
+}
+
+// handleUpload stores one uploaded file under downloads/uploads/ and returns
+// its absolute path so the agent can read_file it right away.
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(1<<20))
+	if err := r.ParseMultipartForm(4 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unggahan gagal / file terlalu besar (maks 20MB)"})
+		return
+	}
+	f, hdr, err := r.FormFile("file")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "field 'file' tidak ada"})
+		return
+	}
+	defer f.Close()
+	name := filepath.Base(strings.TrimSpace(hdr.Filename))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "unggahan.bin"
+	}
+	dir := s.uploadsDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	stored := fmt.Sprintf("%s-%s", time.Now().Format("20060102-150405"), name)
+	full := filepath.Join(dir, stored)
+	dst, err := os.Create(full)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	n, cerr := io.Copy(dst, io.LimitReader(f, maxUploadBytes+1))
+	_ = dst.Close()
+	if cerr != nil {
+		_ = os.Remove(full)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": cerr.Error()})
+		return
+	}
+	if n > maxUploadBytes {
+		_ = os.Remove(full)
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "file terlalu besar (maks 20MB)"})
+		return
+	}
+	rel := path.Join("downloads", "uploads", stored)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"name": name,
+		"path": full,
+		"rel":  rel,
+		"size": n,
+		"url":  "/api/file?path=" + url.QueryEscape(path.Join("uploads", stored)),
+	})
+}
+
+// fileEntry is one row of GET /api/files.
+type fileEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	URL  string `json:"url"`
+	Size int64  `json:"size"`
+	Time string `json:"time"`
+	Src  string `json:"src,omitempty"`
+
+	mod time.Time `json:"-"`
+}
+
+// handleFiles lists everything under downloads/ (upload + hasil kerja agent),
+// terbaru dulu.
+func (s *Server) handleFiles(w http.ResponseWriter, r *http.Request) {
+	base := s.downloadsDir()
+	out := []fileEntry{}
+	_ = filepath.WalkDir(base, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, rerr := filepath.Rel(base, p)
+		if rerr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel != "." && (strings.HasPrefix(d.Name(), ".") || strings.Count(rel, "/") >= 2) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		fi, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		src := ""
+		switch {
+		case strings.HasPrefix(rel, "web/"):
+			src = "dari Puru"
+		case strings.HasPrefix(rel, "uploads/"):
+			src = "dari kamu"
+		}
+		out = append(out, fileEntry{
+			Name: filepath.Base(p),
+			Path: rel,
+			URL:  "/api/file?path=" + url.QueryEscape(rel),
+			Size: fi.Size(),
+			Time: fi.ModTime().Format("02 Jan 15:04"),
+			Src:  src,
+			mod:  fi.ModTime(),
+		})
+		if len(out) >= 500 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	sort.Slice(out, func(a, b int) bool { return out[a].mod.After(out[b].mod) })
+	writeJSON(w, http.StatusOK, map[string]any{"files": out, "dir": base})
+}
+
+// handleFile serves one file from downloads/ as an attachment.
+func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
+	full, err := s.resolveDownloadsFile(r.URL.Query().Get("path"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "file tidak ditemukan"})
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || fi.IsDir() {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "bukan file"})
+		return
+	}
+	name := filepath.Base(full)
+	ct := mime.TypeByExtension(filepath.Ext(name))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	disp := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	if disp == "" {
+		disp = "attachment"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Content-Disposition", disp)
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, name, fi.ModTime(), f)
 }

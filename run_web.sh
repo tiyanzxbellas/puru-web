@@ -3,7 +3,7 @@
 # Termux/Android/Linux/macOS. Binari android HARUS dinilai lokal (CGO=1 biar DNS aman).
 set -e
 cd "$(dirname "$0")"
-PORT="${PORT:-8080}"
+PORT="${PORT:-18099}"
 ADDR="${ADDR:-127.0.0.1:$PORT}"
 
 if [ ! -f .build/config.json ]; then

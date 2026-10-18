@@ -57,6 +57,10 @@ func main() {
 
 	srv := webui.New(agent, hist, mem, cfg, system)
 
+	// Web channel file bridge: telegram_sendfile jadi jalan juga di web
+	// (file disimpan ke downloads/web + muncul tombol unduh di UI).
+	agent.Telegram = srv
+
 	listen := *addr
 	if listen == "" {
 		host := cfg.Host

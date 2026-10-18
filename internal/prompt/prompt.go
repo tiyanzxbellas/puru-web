@@ -483,7 +483,7 @@ Workspace root: %s
 		sections = append(sections,
 			`## Tooling
 Tools are declared via native function calls; names are case-sensitive, call them exactly.
-Availability is gated by config: telegram_* tools need a Telegram chat, web_search needs a ready provider.`,
+Availability is gated by config: telegram_sendfile works in Telegram and in the web UI (the file is offered as a download), telegram_getuser needs a Telegram chat, web_search needs a ready provider.`,
 			`## Tool Call Style
 Routine low-risk calls: act silently, no narration.
 Narrate only complex, sensitive/destructive, or explicitly requested steps.`,

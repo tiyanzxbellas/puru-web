@@ -52,7 +52,7 @@ var allToolsDesc = map[string]string{
 	"edit_file_by_line": "Replace the line range start_line..end_line with new content. Lines are 1-based. Prefer edit_file when you can match exact text.",
 	"append_file":       "Append text to the end of a file, creating it if missing. Use for logs and incremental output; for edits inside the file use edit_file.",
 	"run_shell_command": "Run or manage shell commands on the host. Use action=run to execute (set background=true for long commands, then poll with action=poll and the returned sessionId). action=list shows sessions, action=read reads output, action=kill stops a running session. Commands run with cwd inside the workspace unless overridden.",
-	"telegram_sendfile": "Send a local file to the Telegram chat as a document. Use filename to override the display name and caption for an accompanying message.",
+	"telegram_sendfile": "Send a local file to the current chat (Telegram or the web UI) as a document/download. Use filename to override the display name and caption for an accompanying message.",
 	"telegram_getuser":  "Fetch Telegram profile information for a user. Omit user_id to look up the current chat.",
 	"get_env":           "Return runtime environment information: OS, architecture, Go version, workspace path, workspace-restriction flag, and Go memory usage (MB). Use to diagnose the environment instead of shelling out.",
 	"web_fetch":         "Fetch a public http/https URL and return its content as text or HTML, optionally sliced by start_line/length. For discovery use web_search first; this fetches one known URL.",
