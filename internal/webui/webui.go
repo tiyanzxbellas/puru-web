@@ -455,11 +455,37 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Unlock()
+	s.archiveHistory(chatID)
 	_ = s.hist.Clear(chatID)
 	// hapus riwayat = mulai dari nol: chat ini jalan tanpa memori jangka
 	// panjang sampai dimatikan lagi lewat tombol 🧠 Memori.
 	s.setFresh(chatID, true)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": chatID, "fresh": true})
+}
+
+// archiveHistory menyalin file riwayat ke <historydir>/.trash/ sebelum dihapus.
+// "Hapus riwayat" tetap membuat chat fresh (tidak diingat AI), tapi percakapan
+// lama tidak hilang permanen karena salah klik: masih ada salinannya di .trash.
+func (s *Server) archiveHistory(chatID int64) {
+	if s == nil || s.cfg == nil {
+		return
+	}
+	dir := s.cfg.HistoryDir()
+	b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.json", chatID)))
+	if err != nil || len(b) == 0 {
+		return
+	}
+	trash := filepath.Join(dir, ".trash")
+	if err := os.MkdirAll(trash, 0o755); err != nil {
+		log.Printf("webui trash: %v", err)
+		return
+	}
+	name := fmt.Sprintf("%s-%d.json", time.Now().Format("20060102-150405"), chatID)
+	if err := os.WriteFile(filepath.Join(trash, name), b, 0o644); err != nil {
+		log.Printf("webui trash: %v", err)
+		return
+	}
+	log.Printf("webui trash: chat %d -> %s (%d bytes)", chatID, name, len(b))
 }
 
 type freshReq struct {
