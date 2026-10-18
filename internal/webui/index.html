@@ -229,6 +229,7 @@ main{flex:1; overflow-y:auto; padding:18px 12px 8px; scroll-behavior:smooth}
 .fp-row .acts{display:flex; gap:6px}
 .fp-thumb{width:44px; height:44px; object-fit:cover; border-radius:8px; flex:0 0 44px; background:#000}
 .fmedia{max-width:100%; max-height:300px; border-radius:10px; display:block; background:#000; cursor:pointer; margin-bottom:2px}
+.fmedia-err{max-width:100%; border:1px dashed var(--border); border-radius:10px; padding:10px 12px; font-size:12.5px; color:var(--muted); background:#000a; line-height:1.6}
 .fp-empty{color:var(--muted); font-size:12.5px; padding:14px 12px; line-height:1.6}
 @media(max-width:520px){.hide-sm{display:none}}
 /* ---- composer ---- */
@@ -574,7 +575,7 @@ function renderAll(msgs){
     renderWelcome("Halo! Puru di sini.", "Tanya apa saja — jawaban teks & kode dibedakan. Ketuk bubble chat buat munculin tombol salin.");
     return;
   }
-  msgs.forEach(m=> addMsg(m.role, m.content));
+  msgs.forEach(m=>{ const el = addMsg(m.role, m.content); if(m.files && m.files.length) addFiles(el, m.files); });
 }
 
 /* ---------------- api ---------------- */
@@ -791,6 +792,15 @@ function mediaEl(f){
     const v = document.createElement("video");
     v.className = "fmedia"; v.src = inlineUrl(f.url); v.controls = true;
     v.preload = "metadata"; v.playsInline = true;
+    v.title = f.name || "video";
+    // Codec yang nggak didukung browser (mis. H.265/bytevc1) bikin player
+    // kosong/hitam — ganti dengan keterangan + arahkan ke tombol unduh.
+    v.addEventListener("error", ()=>{
+      const w = document.createElement("div");
+      w.className = "fmedia-err";
+      w.textContent = "⚠️ Video ini formatnya nggak bisa diputar di browser (mis. H.265). Pakai tombol ⬇ di bawah buat unduh, atau buka di aplikasi pemutar video.";
+      v.replaceWith(w);
+    }, {once:true});
     return v;
   }
   return null;

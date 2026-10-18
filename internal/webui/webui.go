@@ -105,6 +105,7 @@ func New(agent *ai.Agent, hist *history.Store, mem *memory.Manager, cfg *config.
 		fresh:  map[int64]bool{},
 	}
 	s.loadFresh()
+	s.loadFiles()
 	return s
 }
 
@@ -169,6 +170,52 @@ func (s *Server) setFresh(chatID int64, on bool) {
 	}
 	s.freshMu.Unlock()
 	s.saveFresh()
+}
+
+// filesPath is where the sent-file index is persisted (dotfile, jadi nggak
+// muncul di panel 📁 File).
+func (s *Server) filesPath() string {
+	return filepath.Join(s.downloadsDir(), ".webui-files.json")
+}
+
+// loadFiles mengembalikan daftar file per chat biar chip tetap ada setelah
+// server di-restart.
+func (s *Server) loadFiles() {
+	b, err := os.ReadFile(s.filesPath())
+	if err != nil || len(b) == 0 {
+		return
+	}
+	m := map[string][]SentFile{}
+	if json.Unmarshal(b, &m) != nil {
+		return
+	}
+	s.filesMu.Lock()
+	for k, v := range m {
+		var id int64
+		if _, err := fmt.Sscanf(k, "%d", &id); err != nil || id == 0 {
+			continue
+		}
+		s.files[id] = v
+	}
+	s.filesMu.Unlock()
+}
+
+func (s *Server) saveFiles() {
+	s.filesMu.Lock()
+	cp := map[string][]SentFile{}
+	for k, v := range s.files {
+		if len(v) == 0 {
+			continue
+		}
+		cp[fmt.Sprint(k)] = v
+	}
+	s.filesMu.Unlock()
+	b, err := json.Marshal(cp)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(s.downloadsDir(), 0o755)
+	_ = os.WriteFile(s.filesPath(), b, 0o644)
 }
 
 // Handler returns the full route tree.
@@ -260,11 +307,21 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 type msgView struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string     `json:"role"`
+	Content string     `json:"content"`
+	Files   []SentFile `json:"files,omitempty"`
 }
 
-func viewMessages(stored []*messages.Message) []msgView {
+// viewMessages renders the chat untuk UI dan menempelkan lagi file yang
+// dikirim agent, jadi chip + preview video/gambar tetap tampil setelah reload
+// atau server restart (dulu chip cuma ada di respons /api/chat saat itu).
+func (s *Server) viewMessages(chatID int64) []msgView {
+	out := buildViews(s.hist.Get(chatID))
+	s.attachFiles(chatID, out)
+	return out
+}
+
+func buildViews(stored []*messages.Message) []msgView {
 	out := make([]msgView, 0, len(stored))
 	for _, m := range stored {
 		if m == nil {
@@ -290,6 +347,37 @@ func viewMessages(stored []*messages.Message) []msgView {
 	return out
 }
 
+// attachFiles menaruh lagi tiap file yang dikirim ke bubble-nya. Idx = jumlah
+// bubble saat file dikirim = posisi jawaban final run itu. Kalau di luar
+// jangkauan (run ke-interrupt), chip jatuh ke bubble assistant terakhir biar
+// nggak hilang.
+func (s *Server) attachFiles(chatID int64, out []msgView) {
+	files := s.sentFiles(chatID)
+	if len(files) == 0 || len(out) == 0 {
+		return
+	}
+	fallback := len(out) - 1
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i].Role == "assistant" {
+			fallback = i
+			break
+		}
+	}
+	for _, f := range files {
+		idx := f.Idx
+		if idx < 0 || idx >= len(out) || out[idx].Role != "assistant" {
+			idx = fallback
+		}
+		out[idx].Files = append(out[idx].Files, f)
+	}
+}
+
+// filesIdx = jumlah bubble yang tampil sekarang; itulah posisi jawaban final
+// run yang sedang jalan, jadi file nempel di bubble yang tepat.
+func (s *Server) filesIdx(chatID int64) int {
+	return len(buildViews(s.hist.Get(chatID)))
+}
+
 // messageText flattens a message into display text: only "text" parts
 // (reasoning/tool-call/tool-result stay hidden from the UI; the engine
 // still keeps them in history).
@@ -311,10 +399,9 @@ func chatIDFromQuery(r *http.Request, def int64) int64 {
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	chatID := chatIDFromQuery(r, DefaultWebChatID)
-	stored := s.hist.Get(chatID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"chat_id":  chatID,
-		"messages": viewMessages(stored),
+		"messages": s.viewMessages(chatID),
 	})
 }
 
@@ -460,6 +547,12 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 	// hapus riwayat = mulai dari nol: chat ini jalan tanpa memori jangka
 	// panjang sampai dimatikan lagi lewat tombol 🧠 Memori.
 	s.setFresh(chatID, true)
+	// chat dikosongkan: chip file lama jangan ikut nempel di chat yang baru
+	// (filenya sendiri tetap ada di server, masih bisa diambil dari panel).
+	s.filesMu.Lock()
+	delete(s.files, chatID)
+	s.filesMu.Unlock()
+	s.saveFiles()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": chatID, "fresh": true})
 }
 
@@ -611,6 +704,9 @@ type SentFile struct {
 	Size    int64  `json:"size"`
 	Caption string `json:"caption,omitempty"`
 	Time    string `json:"time"`
+	// Idx = jumlah bubble yang tampil saat file dikirim; dipakai buat
+	// nempelin chip ke bubble jawaban yang benar (tahan reload/restart).
+	Idx int `json:"idx,omitempty"`
 }
 
 func (s *Server) downloadsDir() string { return filepath.Join(s.cfg.Workspace, "downloads") }
@@ -647,9 +743,14 @@ func (s *Server) SendFile(ctx context.Context, chatID int64, filename string, da
 		Caption: caption,
 		Time:    time.Now().Format("02 Jan 15:04"),
 	}
+	sf.Idx = s.filesIdx(chatID)
 	s.filesMu.Lock()
 	s.files[chatID] = append(s.files[chatID], sf)
+	if n := len(s.files[chatID]); n > 200 {
+		s.files[chatID] = append([]SentFile{}, s.files[chatID][n-200:]...)
+	}
 	s.filesMu.Unlock()
+	s.saveFiles()
 	log.Printf("webui sendfile: chat %d <- %s (%d bytes)", chatID, name, len(data))
 	return nil
 }
