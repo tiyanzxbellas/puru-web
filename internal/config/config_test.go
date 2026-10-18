@@ -1,0 +1,283 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func writeCfg(t *testing.T, content string) string {
+	t.Helper()
+	// Ensure ambient CONFIG env (CI/PaaS) does not hijack file-based Load.
+	t.Setenv("CONFIG", "")
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadDefaults(t *testing.T) {
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"}}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxIterations != DefaultMaxIterations {
+		t.Errorf("MaxIterations = %d, want %d", c.MaxIterations, DefaultMaxIterations)
+	}
+	if c.HistoryTokenLimit != DefaultHistoryTokLimit {
+		t.Errorf("HistoryTokenLimit = %d, want %d", c.HistoryTokenLimit, DefaultHistoryTokLimit)
+	}
+	if !c.RestrictWorkspace && c.Workspace == "" {
+		t.Errorf("workspace default tidak diterapkan")
+	}
+	if c.MemoryPath() == "" || c.HistoryDir() == "" {
+		t.Errorf("MemoryPath/HistoryDir kosong")
+	}
+	if c.Host != DefaultHealthHost {
+		t.Errorf("Host = %q, want %q", c.Host, DefaultHealthHost)
+	}
+	if c.Port != DefaultHealthPort {
+		t.Errorf("Port = %d, want %d", c.Port, DefaultHealthPort)
+	}
+	if !c.ShowToolsPreview() {
+		t.Errorf("ShowToolsPreview default harus true")
+	}
+	if c.LoopDelaySeconds != DefaultLoopDelaySeconds {
+		t.Errorf("LoopDelaySeconds = %d, want %d", c.LoopDelaySeconds, DefaultLoopDelaySeconds)
+	}
+	if c.ExecMemoryMB != DefaultExecMemoryMB {
+		t.Errorf("ExecMemoryMB = %d, want %d", c.ExecMemoryMB, DefaultExecMemoryMB)
+	}
+}
+
+func TestToolsPreviewExplicit(t *testing.T) {
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"tools_preview":false,"loop_delay_seconds":10}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ShowToolsPreview() {
+		t.Errorf("ShowToolsPreview harus false bila di-set false")
+	}
+	if c.LoopDelay() != 10*time.Second {
+		t.Errorf("LoopDelay = %v, want 10s", c.LoopDelay())
+	}
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"loop_delay_seconds":999}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LoopDelaySeconds != MaxLoopDelaySeconds {
+		t.Errorf("LoopDelaySeconds harus di-clamp ke %d, got %d", MaxLoopDelaySeconds, c.LoopDelaySeconds)
+	}
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"exec_memory_mb":10}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ExecMemoryMB != MinExecMemoryMB {
+		t.Errorf("ExecMemoryMB harus di-clamp ke min %d, got %d", MinExecMemoryMB, c.ExecMemoryMB)
+	}
+}
+
+func TestLoadRejectsEmptyToken(t *testing.T) {
+	p := writeCfg(t, `{"model":{"base_url":"http://m/v1","model":"puru"}}`)
+	if _, err := Load(p); err == nil {
+		t.Errorf("expected error untuk token kosong")
+	}
+}
+
+func TestLoadFromEnvCONFIG(t *testing.T) {
+	t.Setenv("CONFIG", `{"telegram_bot_token":"env-token","model":{"base_url":"http://m/v1","model":"puru"}}`)
+	// Bogus path on purpose — must be ignored when CONFIG is set.
+	c, err := Load("/tmp/does-not-exist-xyz.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TelegramBotToken != "env-token" {
+		t.Errorf("token = %q, want env-token", c.TelegramBotToken)
+	}
+	if c.MaxIterations != DefaultMaxIterations {
+		t.Errorf("defaults harus diterapkan dari env, got %d", c.MaxIterations)
+	}
+	// Invalid JSON in CONFIG must error.
+	t.Setenv("CONFIG", `{bukan-json`)
+	if _, err := Load("/tmp/does-not-exist-xyz.json"); err == nil {
+		t.Errorf("expected error untuk CONFIG invalid JSON")
+	}
+	// Empty CONFIG = fall back to file as usual.
+	t.Setenv("CONFIG", "")
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"}}`)
+	if _, err := Load(p); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolvePathPrecedence(t *testing.T) {
+	t.Setenv("PURU_CONFIG", "/tmp/env.json")
+	if got := ResolvePath("/tmp/flag.json"); got != "/tmp/flag.json" {
+		t.Errorf("flag harus menang, got %s", got)
+	}
+	if got := ResolvePath(""); got != "/tmp/env.json" {
+		t.Errorf("env harus dipakai, got %s", got)
+	}
+}
+
+func TestIsUserAllowed(t *testing.T) {
+	var nilCfg *Config
+	if !nilCfg.IsUserAllowed(1) {
+		t.Errorf("nil cfg harus allow semua")
+	}
+	c := &Config{}
+	if !c.IsUserAllowed(123) {
+		t.Errorf("allowlist kosong harus allow semua")
+	}
+	c = &Config{TelegramAllowedUsers: []int64{111, 222}}
+	if !c.IsUserAllowed(111) || !c.IsUserAllowed(222) {
+		t.Errorf("id terdaftar harus allow")
+	}
+	if c.IsUserAllowed(333) {
+		t.Errorf("id tak terdaftar harus block")
+	}
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"telegram_allowed_users":[111,222]}`)
+	lc, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lc.IsUserAllowed(111) || lc.IsUserAllowed(999) {
+		t.Errorf("load allowlist salah: %+v", lc.TelegramAllowedUsers)
+	}
+}
+
+func TestSkillsMode(t *testing.T) {
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"}}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SkillsMode != "default" {
+		t.Errorf("SkillsMode = %q, want default", c.SkillsMode)
+	}
+	if !c.SkillsPolicy().Allows("find-skills") {
+		t.Errorf("default policy must allow all")
+	}
+
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"skills_mode":" OFF "}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SkillsMode != "off" {
+		t.Errorf("SkillsMode = %q, want off", c.SkillsMode)
+	}
+	if c.SkillsPolicy().Allows("find-skills") {
+		t.Errorf("off policy must block all")
+	}
+
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"skills_mode":"custom","skills_allow":["find-skills"]}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := c.SkillsPolicy()
+	if !pol.Allows("FIND-SKILLS") || pol.Allows("skill-creator") {
+		t.Errorf("custom policy must enforce allowlist")
+	}
+
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"skills_mode":"sometimes"}`)
+	if _, err := Load(p); err == nil {
+		t.Errorf("unknown skills_mode must be rejected")
+	}
+}
+
+func TestWebSearchDefaultsDisabled(t *testing.T) {
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"}}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WebSearchEnabled() {
+		t.Errorf("web_search default harus disabled")
+	}
+}
+
+func TestWebSearchAIStudioEnabled(t *testing.T) {
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"aistudio":{"active":true,"model":"gemini-2.5-flash","api_key":"k123"}}}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WebSearchEnabled() {
+		t.Errorf("web_search active dengan model+key harus enabled")
+	}
+	if c.WebSearch.AIStudio.Model != "gemini-2.5-flash" {
+		t.Errorf("model = %q", c.WebSearch.AIStudio.Model)
+	}
+	// Alternate "apikey" spelling must also load.
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"aistudio":{"active":true,"model":"gemma-4-31b-it","apikey":"k456"}}}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WebSearchEnabled() || c.WebSearch.AIStudio.APIKey != "k456" {
+		t.Errorf("apikey spelling harus diterima: %+v", c.WebSearch.AIStudio)
+	}
+	// Missing key stays disabled.
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"aistudio":{"active":true,"model":"gemini-2.5-flash"}}}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WebSearchEnabled() {
+		t.Errorf("tanpa api key harus disabled")
+	}
+	var nilCfg *Config
+	if nilCfg.WebSearchEnabled() {
+		t.Errorf("nil cfg harus disabled")
+	}
+}
+
+func TestWebSearchExaEnabled(t *testing.T) {
+	p := writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"exa":{"active":true,"api_key":"e123"}}}`)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WebSearchEnabled() {
+		t.Errorf("web_search exa active dengan key harus enabled")
+	}
+	if c.WebSearch.Exa.APIKey != "e123" {
+		t.Errorf("exa key = %q", c.WebSearch.Exa.APIKey)
+	}
+	// Alternate "apikey" spelling must also load.
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"exa":{"active":true,"apikey":"e456"}}}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WebSearchEnabled() || c.WebSearch.Exa.APIKey != "e456" {
+		t.Errorf("exa apikey spelling harus diterima: %+v", c.WebSearch.Exa)
+	}
+	// Missing key stays disabled.
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"exa":{"active":true}}}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WebSearchEnabled() {
+		t.Errorf("exa tanpa api key harus disabled")
+	}
+	// Both providers ready stays enabled.
+	p = writeCfg(t, `{"telegram_bot_token":"x","model":{"base_url":"http://m/v1","model":"puru"},"web_search":{"aistudio":{"active":true,"model":"gemini-2.5-flash","api_key":"k123"},"exa":{"active":true,"api_key":"e123"}}}`)
+	c, err = Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.WebSearchEnabled() || !c.WebSearch.AIStudio.Ready() || !c.WebSearch.Exa.Ready() {
+		t.Errorf("dua provider ready harus enabled: %+v", c.WebSearch)
+	}
+}
