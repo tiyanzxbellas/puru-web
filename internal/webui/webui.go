@@ -801,7 +801,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+(1<<20))
 	if err := r.ParseMultipartForm(4 << 20); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unggahan gagal / file terlalu besar (maks 20MB)"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "unggahan gagal / file terlalu besar (maks 49MB)"})
 		return
 	}
 	f, hdr, err := r.FormFile("file")
@@ -835,7 +835,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if n > maxUploadBytes {
 		_ = os.Remove(full)
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "file terlalu besar (maks 20MB)"})
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]any{"error": "file terlalu besar (maks 49MB)"})
 		return
 	}
 	rel := path.Join("downloads", "uploads", stored)
@@ -967,6 +967,17 @@ var extraMimeTypes = map[string]string{
 	".m4v":  "video/mp4",
 	".mkv":  "video/x-matroska",
 	".ogv":  "video/ogg",
+	".zip":  "application/zip",
+	".7z":   "application/x-7z-compressed",
+	".rar":  "application/vnd.rar",
+	".tar":  "application/x-tar",
+	".gz":   "application/gzip",
+	".bz2":  "application/x-bzip2",
+	".xz":   "application/x-xz",
+	".apk":  "application/vnd.android.package-archive",
+	".md":   "text/markdown",
+	".txt":  "text/plain; charset=utf-8",
+	".csv":  "text/csv; charset=utf-8",
 }
 
 // contentTypeFor menebak MIME dari nama file: tabel sistem/bawaan Go dulu,

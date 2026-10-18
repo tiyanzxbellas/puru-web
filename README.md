@@ -245,7 +245,9 @@ Telegram) — semuanya lewat tool `telegram_sendfile` (maks 49 MB/berkas).
 | Gambar | png, jpg, jpeg, gif, webp, bmp, avif, svg | pratinjau `<img>` (klik = ukuran penuh) |
 | Video | mp4, webm, mov, m4v, ogv, mkv | player `<video controls>`, bisa di-seek |
 | **Audio** | **mp3, m4a, m4b, aac, ogg, oga, opus, flac, wav, weba, wma, amr** | **player `<audio controls>` — langsung bisa diputar** |
-| Lainnya | apa saja | chip 📄 + tombol ⬇ unduh |
+| Arsip | **zip, 7z, rar, tar, gz, bz2, xz** | chip 📄 + tombol ⬇ unduh |
+| Dokumen | **md, txt, csv, html, apk** | chip 📄 + tombol ⬇ unduh (html = `text/html`) |
+| Lainnya | **apa saja** (bin, iso, …) | chip 📄 + tombol ⬇ unduh |
 
 - Chip file nempel di **bubble jawaban** yang benar dan **tetap ada setelah
   reload / pindah chat / restart server** (dicatat di
@@ -260,6 +262,8 @@ Contoh perintah yang jalan di web:
 - "unduh video TikTok <link> terus kirim ke chat ini"
 - "download lagu YouTube <link> jadi MP3, kirim ke chat" ← `yt-dlp -x --audio-format mp3` lalu `telegram_sendfile`
 - "bikin gambar dari <url> terus kirim"
+- "zip folder project jadi project.zip terus kirim"
+- "bikin arsip 7z dari 3 file itu, kirim ke chat" ← `7z a -t7z` (7-Zip 26.04 ada di Termux)
 
 **Audio di Telegram:** bot mengirim audio pakai `sendAudio`, jadi muncul
 sebagai kartu musik yang bisa diputar langsung di aplikasi Telegram; kalau
