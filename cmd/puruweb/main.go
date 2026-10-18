@@ -54,8 +54,10 @@ func main() {
 	agent := &ai.Agent{Client: llm, Config: cfg, HTTP: hc}
 
 	system := renderedSystem(cfg)
+	systemFresh := renderedSystemFresh(cfg)
 
 	srv := webui.New(agent, hist, mem, cfg, system)
+	srv.SetFreshSystem(systemFresh)
 
 	// Web channel file bridge: telegram_sendfile jadi jalan juga di web
 	// (file disimpan ke downloads/web + muncul tombol unduh di UI).
@@ -95,6 +97,17 @@ func main() {
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
 	log.Println("puruweb berhenti.")
+}
+
+// renderedSystemFresh is the same system prompt but WITHOUT long-term memory
+// and WITHOUT the newest context summary: web "chat baru / hapus riwayat"
+// starts from zero (Mode fresh).
+func renderedSystemFresh(cfg *config.Config) string {
+	s, err := prompt.Get("", "", cfg.Workspace, cfg.SkillsPolicy())
+	if err != nil {
+		return ""
+	}
+	return s
 }
 
 // renderedSystem mirrors cmd/puru's renderedSystemPrompt (system prompt is

@@ -294,6 +294,7 @@ footer{
       <button class="hbtn" id="btn-menu" title="Riwayat">☰</button>
       <div class="title">Puru AI <small>chat</small></div>
       <div class="spacer"></div>
+      <button class="hbtn" id="btn-fresh" title="Mode memori">🧠 Memori</button>
       <button class="hbtn" id="btn-files" title="File dari Puru">📁<span class="hide-sm"> File</span></button>
       <button class="hbtn" id="btn-new" title="Chat baru">＋ Baru</button>
       <button class="hbtn" id="btn-clear" title="Hapus riwayat chat ini">🗑</button>
@@ -344,12 +345,30 @@ let chatId = 0;          // 0 = default slot
 let busy = false;
 let polling = false;
 let gen = 0;             // pembeda request; naik = abaikan respons lama
+let freshMode = false;   // true = chat ini tanpa memori jangka panjang
 
 /* ---------------- util ---------------- */
 function setChatId(id){
   if(id){ chatId = Number(id); try{ localStorage.setItem("puru_chat_id", String(id)); }catch(e){} }
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+const btnFresh = $("#btn-fresh");
+function renderFresh(){
+  if(!btnFresh) return;
+  btnFresh.innerHTML = freshMode
+    ? '✨ Fresh<span class="hide-sm"> · tanpa memori</span>'
+    : '🧠 Memori<span class="hide-sm"> ON</span>';
+  btnFresh.title = freshMode
+    ? "Chat ini mulai dari nol (tanpa MEMORY.md & ringkasan). Klik buat pakai memori."
+    : "Memori jangka panjang ON. Klik buat mode fresh (mulai dari nol).";
+}
+async function toggleFresh(){
+  const want = !freshMode;
+  try{
+    const j = await api("/api/fresh", {method:"POST", body:JSON.stringify({chat_id:chatId, fresh:want})});
+    freshMode = !!j.fresh; renderFresh();
+  }catch(e){ alert("Gagal ganti mode: " + e.message); }
+}
 function openSidebar(){ sidebar.classList.add("open"); backdrop.classList.add("show"); }
 function closeSidebar(){ sidebar.classList.remove("open"); backdrop.classList.remove("show"); }
 
@@ -573,6 +592,8 @@ async function refreshInfo(){
   try{
     const j = await api("/api/info"+(chatId?("?chat_id="+chatId):""));
     setChatId(j.chat_id);
+    freshMode = !!j.fresh;
+    renderFresh();
     const st = $("#st-text");
     if(st) st.textContent = j.running ? "memproses…" : "online";
     sbFoot.classList.toggle("off", !!j.running);
@@ -616,11 +637,12 @@ async function loadChats(){
 async function pollPending(){
   if(polling) return;
   polling = true;
+  busy = true; send.disabled = true;
   const myGen = gen;
   addTyping();
-  const base = wrap.querySelectorAll(".msg:not(#typing)").length;
-  for(let i=0;i<240;i++){
-    await sleep(4000);
+  let lastLen = wrap.querySelectorAll(".msg:not(#typing)").length;
+  for(let i=0;i<3600;i++){
+    await sleep(3000);
     if(myGen !== gen){ polling = false; return; }
     try{
       const j = await api("/api/messages"+(chatId?("?chat_id="+chatId):""));
@@ -628,17 +650,23 @@ async function pollPending(){
       const msgs = j.messages || [];
       const inf = await api("/api/info"+(chatId?("?chat_id="+chatId):""));
       if(myGen !== gen){ polling = false; return; }
-      if(msgs.length > base || !inf.running){
+      if(!inf.running){
         delTyping();
         renderAll(msgs);
-        polling = false;
+        polling = false; busy = false; send.disabled = false;
         refreshInfo(); loadChats();
         return;
+      }
+      if(msgs.length !== lastLen){   // pertanyaan / jawaban parsial nambah
+        lastLen = msgs.length;
+        delTyping();
+        renderAll(msgs);
+        addTyping();
       }
     }catch(e){}
   }
   delTyping();
-  polling = false;
+  polling = false; busy = false; send.disabled = false;
 }
 
 /* ---------------- aksi ---------------- */
@@ -661,7 +689,8 @@ async function newChat(){
     const j = await api("/api/new_chat", {method:"POST", body:"{}"});
     gen++; polling = false; busy = false; send.disabled = false;
     setChatId(j.chat_id);
-    renderWelcome("Chat baru", "Mulai percakapan baru — riwayat lama tetap ada di sidebar.");
+    freshMode = true; renderFresh();
+    renderWelcome("Chat baru ✨ (fresh)", "Percakapan mulai dari nol — tanpa memori jangka panjang. Riwayat lama tetap ada di sidebar.");
     closeSidebar();
     refreshInfo(); loadChats(); input.focus();
   }catch(e){ alert("Gagal: " + e.message); }
@@ -672,7 +701,8 @@ async function clearChat(){
   try{
     await api("/api/clear", {method:"POST", body:JSON.stringify({chat_id:chatId})});
     gen++; polling = false; busy = false; send.disabled = false;
-    renderWelcome("Riwayat dihapus", "Mulai lagi kapan saja.");
+    freshMode = true; renderFresh();
+    renderWelcome("Riwayat dihapus ✨", "Riwayat chat dibersihin & mode fresh aktif (mulai dari nol). Mulai lagi kapan saja.");
     refreshInfo(); loadChats();
   }catch(e){
     if(e.status === 409) alert("Chat ini masih diproses, coba lagi nanti.");
@@ -815,6 +845,7 @@ input.addEventListener("input", autosize);
 send.addEventListener("click", ()=> sendMsg(input.value));
 
 /* ---------------- tombol ---------------- */
+$("#btn-fresh").addEventListener("click", toggleFresh);
 $("#btn-new").addEventListener("click", newChat);
 $("#btn-new-sb").addEventListener("click", newChat);
 $("#btn-clear").addEventListener("click", clearChat);
@@ -828,6 +859,7 @@ document.addEventListener("keydown", e=>{ if(e.key === "Escape") closeSidebar();
     const saved = parseInt(localStorage.getItem("puru_chat_id")||"0", 10);
     if(saved > 0) chatId = saved;
   }catch(e){}
+  renderFresh();
   try{ await loadHistory(); }
   catch(e){ renderWelcome("Halo! Puru di sini.", "Tanya apa saja — jawaban teks & kode dibedakan."); }
   await loadChats();

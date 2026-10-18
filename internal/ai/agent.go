@@ -100,6 +100,10 @@ type ProcessOptions struct {
 	User *TelegramUser
 	// OnTool fires synchronously on every tool call (live preview hook).
 	OnTool func(name string, args map[string]any)
+	// Fresh skips long-term memory (memory/MEMORY.md) and the newest context
+	// summary, so a brand new chat starts from zero (web: chat baru / hapus
+	// riwayat). Identity (AGENTS.md/SOUL.md/USER.md) + skills stay active.
+	Fresh bool
 }
 
 type ProcessResult struct {
@@ -564,7 +568,8 @@ func (a *Agent) ProcessMessage(ctx context.Context, userMessage string, history 
 	}
 	memoryContent := ""
 	summary := ""
-	if a.Config != nil {
+	// Mode fresh: tanpa memori jangka panjang + tanpa ringkasan konteks.
+	if a.Config != nil && !processFresh(opts) {
 		if b, err := os.ReadFile(a.Config.MemoryPath()); err == nil {
 			memoryContent = string(b)
 		}
@@ -620,6 +625,11 @@ func errResult() *ProcessResult {
 }
 
 // processChannel reports the origin channel for the runtime context block.
+// processFresh reports whether this run must ignore long-term memory.
+func processFresh(opts *ProcessOptions) bool {
+	return opts != nil && opts.Fresh
+}
+
 func processChannel(opts *ProcessOptions) string {
 	if opts != nil && strings.TrimSpace(opts.Channel) != "" {
 		return strings.TrimSpace(opts.Channel)

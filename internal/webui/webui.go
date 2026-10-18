@@ -35,6 +35,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,7 +62,9 @@ const maxMessageBytes = 256 << 10
 const maxUploadBytes = 20 << 20
 
 // maxRun caps one agent run so a hung model call never wedges the slot.
-const maxRun = 10 * time.Minute
+// Override with PURUWEB_MAX_RUN_MIN (minute); default 60 because heavy tasks
+// (scrape/sniff) can run for a long time.
+var maxRun = 60 * time.Minute
 
 // Server wires the agent + stores into an HTTP handler.
 type Server struct {
@@ -76,12 +79,22 @@ type Server struct {
 
 	filesMu sync.Mutex
 	files   map[int64][]SentFile // chatID → files pushed by the agent
+
+	freshSys string // system prompt tanpa memori (mode fresh)
+
+	freshMu sync.Mutex
+	fresh   map[int64]bool // chatID → run without long-term memory
 }
 
 // New builds the web server. system is the rendered system prompt (used
 // for token accounting + compaction threshold, same as the CLI path).
 func New(agent *ai.Agent, hist *history.Store, mem *memory.Manager, cfg *config.Config, system string) *Server {
-	return &Server{
+	if v := strings.TrimSpace(os.Getenv("PURUWEB_MAX_RUN_MIN")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxRun = time.Duration(n) * time.Minute
+		}
+	}
+	s := &Server{
 		agent:  agent,
 		hist:   hist,
 		mem:    mem,
@@ -89,7 +102,73 @@ func New(agent *ai.Agent, hist *history.Store, mem *memory.Manager, cfg *config.
 		system: system,
 		busy:   map[int64]bool{},
 		files:  map[int64][]SentFile{},
+		fresh:  map[int64]bool{},
 	}
+	s.loadFresh()
+	return s
+}
+
+// SetFreshSystem sets the memory-less system prompt (mode fresh).
+func (s *Server) SetFreshSystem(sys string) { s.freshSys = sys }
+
+func (s *Server) freshSystem() string {
+	if strings.TrimSpace(s.freshSys) == "" {
+		return s.system
+	}
+	return s.freshSys
+}
+
+func (s *Server) freshPath() string {
+	return filepath.Join(s.downloadsDir(), ".webui-fresh.json")
+}
+
+func (s *Server) loadFresh() {
+	b, err := os.ReadFile(s.freshPath())
+	if err != nil || len(b) == 0 {
+		return
+	}
+	m := map[int64]bool{}
+	if json.Unmarshal(b, &m) != nil {
+		return
+	}
+	s.freshMu.Lock()
+	for k, v := range m {
+		s.fresh[k] = v
+	}
+	s.freshMu.Unlock()
+}
+
+func (s *Server) saveFresh() {
+	s.freshMu.Lock()
+	cp := map[int64]bool{}
+	for k, v := range s.fresh {
+		cp[k] = v
+	}
+	s.freshMu.Unlock()
+	b, err := json.Marshal(cp)
+	if err != nil {
+		return
+	}
+	_ = os.MkdirAll(s.downloadsDir(), 0o755)
+	_ = os.WriteFile(s.freshPath(), b, 0o644)
+}
+
+// isFresh reports whether the chat slot runs without long-term memory.
+func (s *Server) isFresh(chatID int64) bool {
+	s.freshMu.Lock()
+	defer s.freshMu.Unlock()
+	return s.fresh[chatID]
+}
+
+func (s *Server) setFresh(chatID int64, on bool) {
+	s.freshMu.Lock()
+	if on {
+		s.fresh[chatID] = true
+	} else {
+		delete(s.fresh, chatID)
+	}
+	s.freshMu.Unlock()
+	s.saveFresh()
 }
 
 // Handler returns the full route tree.
@@ -104,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/clear", s.handleClear)
 	mux.HandleFunc("/api/new_chat", s.handleNewChat)
 	mux.HandleFunc("/api/chats", s.handleChats)
+	mux.HandleFunc("/api/fresh", s.handleFresh)
 	mux.HandleFunc("/api/upload", s.handleUpload)
 	mux.HandleFunc("/api/files", s.handleFiles)
 	mux.HandleFunc("/api/file", s.handleFile)
@@ -153,6 +233,7 @@ type infoResp struct {
 	TokenLimit    int    `json:"token_limit"`
 	ChatID        int64  `json:"chat_id"`
 	Running       bool   `json:"running"`
+	Fresh         bool   `json:"fresh"`
 	Time          string `json:"time"`
 }
 
@@ -162,13 +243,18 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	busy := s.busy[chatID]
 	s.mu.Unlock()
 	stored := s.hist.Get(chatID)
+	sys := s.system
+	if s.isFresh(chatID) {
+		sys = s.freshSystem()
+	}
 	writeJSON(w, http.StatusOK, infoResp{
 		Model:         s.cfg.Model.Model,
 		Workspace:     s.cfg.Workspace,
-		HistoryTokens: history.TokenCountFull(s.system, stored),
+		HistoryTokens: history.TokenCountFull(sys, stored),
 		TokenLimit:    s.cfg.HistoryTokenLimit,
 		ChatID:        chatID,
 		Running:       busy,
+		Fresh:         s.isFresh(chatID),
 		Time:          time.Now().Format(time.RFC3339),
 	})
 }
@@ -294,8 +380,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	stored := s.hist.Get(chatID)
 	filesBefore := len(s.sentFiles(chatID))
 
-	// compaction (same as the CLI path)
-	if history.TokenCountFull(s.system, stored) >= s.cfg.HistoryTokenLimit && len(stored) > 0 {
+	// Simpan pertanyaan user SEKARANG (sebelum run jalan): kalau tab di-reload
+	// atau server restart di tengah proses, pertanyaannya tidak hilang.
+	_ = s.hist.Set(chatID, append(append([]*messages.Message{}, stored...), userMsg(text)...))
+
+	// Compaction pakai ukuran RIWAYAT saja (bukan system+riwayat). Dulu
+	// system+riwayat dipakai, dan karena MEMORY.md bisa lebih besar dari
+	// history_token_limit, compaction jalan di tiap pesan → riwayat yang
+	// tampil kepangkas jadi 1 exchange (keluhan "pembicaraan hilang").
+	if history.TokenCount(stored) >= s.cfg.HistoryTokenLimit && len(stored) > 4 {
 		cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		rel, cerr := s.mem.Compact(cctx, stored)
 		cancel()
@@ -307,7 +400,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	opts := &ai.ProcessOptions{ChatID: chatID, Channel: "web"}
+	sys := s.system
+	if s.isFresh(chatID) {
+		sys = s.freshSystem()
+	}
+
+	opts := &ai.ProcessOptions{ChatID: chatID, Channel: "web", Fresh: s.isFresh(chatID)}
 	if s.cfg.ShowToolsPreview() {
 		opts.OnTool = func(name string, args map[string]any) {
 			log.Printf("webui tool: %s", name)
@@ -328,7 +426,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		OK:         true,
 		Reply:      strings.TrimSpace(res.Text),
 		Tokens:     res.TotalTokens,
-		HistTokens: history.TokenCountFull(s.system, saved),
+		HistTokens: history.TokenCountFull(sys, saved),
 		Files:      s.newFiles(chatID, filesBefore),
 		ChatID:     chatID,
 		DurationMs: time.Since(start).Milliseconds(),
@@ -358,7 +456,38 @@ func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	_ = s.hist.Clear(chatID)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": chatID})
+	// hapus riwayat = mulai dari nol: chat ini jalan tanpa memori jangka
+	// panjang sampai dimatikan lagi lewat tombol 🧠 Memori.
+	s.setFresh(chatID, true)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": chatID, "fresh": true})
+}
+
+type freshReq struct {
+	ChatID int64 `json:"chat_id"`
+	Fresh  *bool `json:"fresh"`
+}
+
+// handleFresh toggles mode fresh (no long-term memory) for one chat slot.
+func (s *Server) handleFresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	var req freshReq
+	if err := readJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad json"})
+		return
+	}
+	chatID := req.ChatID
+	if chatID == 0 {
+		chatID = DefaultWebChatID
+	}
+	on := true
+	if req.Fresh != nil {
+		on = *req.Fresh
+	}
+	s.setFresh(chatID, on)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": chatID, "fresh": on})
 }
 
 // handleNewChat allocates the next web chat slot (>DefaultWebChatID).
@@ -382,7 +511,9 @@ func (s *Server) handleNewChat(w http.ResponseWriter, r *http.Request) {
 	if next <= DefaultWebChatID {
 		next = DefaultWebChatID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": next})
+	// chat baru = fresh: tanpa MEMORY.md + tanpa ringkasan konteks.
+	s.setFresh(next, true)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": next, "fresh": true})
 }
 
 // handleChats lists web chat slots with previews.

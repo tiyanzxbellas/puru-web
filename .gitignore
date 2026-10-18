@@ -24,3 +24,7 @@ android/app/src/main/jniLibs/x86_64/libpuru.so
 .build/
 tmp/
 *.log
+
+# backup lokal patch
+*.bak
+*.bak-*
