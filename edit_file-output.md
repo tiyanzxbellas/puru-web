@@ -8,12 +8,12 @@
 {
   "new_string": "Puru",
   "old_string": "world",
-  "path": "/tmp/puru-tools-dump-4255631992/editme.txt"
+  "path": "/tmp/puru-tools-dump-555768344/editme.txt"
 }
 ```
 
 ## output
 
 ```
-File edited: /tmp/puru-tools-dump-4255631992/editme.txt
+File edited: /tmp/puru-tools-dump-555768344/editme.txt
 ```
