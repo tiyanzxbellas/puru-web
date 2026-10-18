@@ -279,14 +279,51 @@ func (a *API) EditMessage(ctx context.Context, chatID int64, messageID int64, te
 	return wrapErr("editMessageText", err)
 }
 
-// SendFile sends data as a document with a caption.
+// audioExts = ekstensi yang dikirim pakai sendAudio biar Telegram nampilin
+// player musik (bukan cuma file dokumen). File lain tetap sendDocument.
+var audioExts = map[string]bool{
+	".mp3": true, ".m4a": true, ".m4b": true, ".aac": true, ".ogg": true,
+	".oga": true, ".opus": true, ".flac": true, ".wav": true, ".weba": true,
+	".wma": true, ".amr": true,
+}
+
+// isAudioName melaporkan apakah nama file kelihatan seperti audio.
+func isAudioName(name string) bool {
+	return audioExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// SendFile sends data with a caption. Audio (mp3/m4a/ogg/…) dikirim pakai
+// sendAudio supaya muncul sebagai track yang bisa langsung diputar; kalau
+// Telegram nolak (file rusak / ekstensi cuma label), otomatis fallback ke
+// sendDocument. Selain audio tetap dikirim sebagai document.
 func (a *API) SendFile(ctx context.Context, chatID int64, filename string, data []byte, caption string) error {
+	if isAudioName(filename) {
+		_, err := a.bot.SendAudio(ctx, &telego.SendAudioParams{
+			ChatID:  telego.ChatID{ID: chatID},
+			Audio:   telegoutil.FileFromBytes(data, filename),
+			Caption: caption,
+			Title:   audioTrackTitle(filename),
+		})
+		if err == nil {
+			return nil
+		}
+	}
 	_, err := a.bot.SendDocument(ctx, &telego.SendDocumentParams{
 		ChatID:   telego.ChatID{ID: chatID},
 		Document: telegoutil.FileFromBytes(data, filename),
 		Caption:  caption,
 	})
 	return wrapErr("sendDocument", err)
+}
+
+// audioTrackTitle = nama file tanpa ekstensi, dipakai sebagai judul track di
+// player Telegram ("dj-astaga-bercanda-full.mp3" -> "dj-astaga-bercanda-full").
+func audioTrackTitle(name string) string {
+	base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
+	if strings.TrimSpace(base) == "" {
+		return "audio"
+	}
+	return base
 }
 
 // DownloadFile fetches a user-uploaded file by file ID and writes it to

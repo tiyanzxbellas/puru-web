@@ -153,3 +153,62 @@ func TestParseEntitiesWrapped(t *testing.T) {
 		t.Fatalf("got %+v", te)
 	}
 }
+
+// ---- audio routing (sendAudio vs sendDocument) ----
+
+func TestSendFileRoutesAudioToSendAudio(t *testing.T) {
+	api, done := fakeBot(t, "/sendAudio", `{"ok":true,"result":{"message_id":7,"date":1,"chat":{"id":8,"type":"private"}}}`, 200)
+	defer done()
+	if err := api.SendFile(context.Background(), 8, "lagu-keren.mp3", []byte("ID3 fake mp3"), "nih lagunya"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendFileDocumentForNonAudio(t *testing.T) {
+	api, done := fakeBot(t, "/sendDocument", `{"ok":true,"result":{"message_id":7,"date":1,"chat":{"id":8,"type":"private"}}}`, 200)
+	defer done()
+	if err := api.SendFile(context.Background(), 8, "catatan.txt", []byte("halo"), ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendFileAudioFallsBackToDocument(t *testing.T) {
+	var audioCalls, docCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendAudio"):
+			audioCalls++
+			w.WriteHeader(400)
+			_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: invalid audio"}`))
+		case strings.HasSuffix(r.URL.Path, "/sendDocument"):
+			docCalls++
+			_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":9,"date":1,"chat":{"id":8,"type":"private"}}}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	api, err := newWithServer("123456:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", srv.Client(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := api.SendFile(context.Background(), 8, "rusak.mp3", []byte("bukan audio"), ""); err != nil {
+		t.Fatal(err)
+	}
+	if audioCalls != 1 || docCalls != 1 {
+		t.Fatalf("want 1 audio + 1 document call, got %d + %d", audioCalls, docCalls)
+	}
+}
+
+func TestAudioTrackTitle(t *testing.T) {
+	if got := audioTrackTitle("dj-astaga-bercanda-full.mp3"); got != "dj-astaga-bercanda-full" {
+		t.Fatalf("got %q", got)
+	}
+	if got := audioTrackTitle(".mp3"); got != "audio" {
+		t.Fatalf("got %q", got)
+	}
+	if !isAudioName("Lagu.OGG") || isAudioName("video.mp4") {
+		t.Fatal("audio detection salah")
+	}
+}

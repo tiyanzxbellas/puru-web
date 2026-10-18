@@ -156,7 +156,7 @@ docker run -d \
 | **File System** | `read`, `write`, `edit`, `ls` | Precise file manipulation with fuzzy matching support. |
 | **Execution** | `run_shell_command` | Run blocking or background commands with RAM limits. |
 | **Web** | `search`, `fetch` | Real-time web search and content extraction. |
-| **Telegram** | `sendfile`, `getuser` | Direct interaction with Telegram's API for file sharing. |
+| **Telegram** | `sendfile`, `getuser` | File sharing via Telegram's API — documents **+ playable audio** (`sendAudio`). |
 | **Runtime** | `get_env` | System telemetry (OS, Arch, Go version, Memory). |
 | **Schedule** | `manage_schedule` | Picoclaw cron-like tasks: once, every, daily, cron (default Asia/Jakarta). |
 
@@ -235,3 +235,35 @@ go build -o puruweb ./cmd/puruweb
 Sama dengan PURU-AI — set env `CONFIG` berisi JSON config
 (endpoint model, api_key, HistoryDir, dst). Lihat `example.config.json`.
 Bot Telegram gak dinyalakan di mode web (token boleh dummy).
+
+### 📤 Kirim file: foto, video, audio, dokumen
+Selain teks, Puru bisa **mengirim file** ke chat web (persis seperti di
+Telegram) — semuanya lewat tool `telegram_sendfile` (maks 49 MB/berkas).
+
+| Jenis | Ekstensi | Tampilan di web |
+| :--- | :--- | :--- |
+| Gambar | png, jpg, jpeg, gif, webp, bmp, avif, svg | pratinjau `<img>` (klik = ukuran penuh) |
+| Video | mp4, webm, mov, m4v, ogv, mkv | player `<video controls>`, bisa di-seek |
+| **Audio** | **mp3, m4a, m4b, aac, ogg, oga, opus, flac, wav, weba, wma, amr** | **player `<audio controls>` — langsung bisa diputar** |
+| Lainnya | apa saja | chip 📄 + tombol ⬇ unduh |
+
+- Chip file nempel di **bubble jawaban** yang benar dan **tetap ada setelah
+  reload / pindah chat / restart server** (dicatat di
+  `downloads/.webui-files.json`).
+- Panel 📁 di header nampilin semua isi `downloads/` — label "dari Puru"
+  (hasil kerja agent) dan "dari kamu" (lampiran) — lengkap dengan tombol
+  ▶ Putar / ⬇.
+- Lampiran dari HP: tombol 📎 (maks 49 MB) → file masuk `downloads/uploads/`
+  dan path-nya otomatis ditempel ke pesan biar bisa dibaca agent.
+
+Contoh perintah yang jalan di web:
+- "unduh video TikTok <link> terus kirim ke chat ini"
+- "download lagu YouTube <link> jadi MP3, kirim ke chat" ← `yt-dlp -x --audio-format mp3` lalu `telegram_sendfile`
+- "bikin gambar dari <url> terus kirim"
+
+**Audio di Telegram:** bot mengirim audio pakai `sendAudio`, jadi muncul
+sebagai kartu musik yang bisa diputar langsung di aplikasi Telegram; kalau
+Telegram menolak, otomatis fallback jadi dokumen biasa.
+
+**Kalau videonya kegedean (>49 MB):** agent bisa menurunkan resolusi /
+kompres dulu, atau kirim sebagai link unduh (`downloads/` tetap sumbernya).

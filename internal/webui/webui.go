@@ -932,10 +932,7 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := filepath.Base(full)
-	ct := mime.TypeByExtension(filepath.Ext(name))
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
+	ct := contentTypeFor(name)
 	kind := "attachment"
 	if r.URL.Query().Get("inline") != "" {
 		// ?inline=1 -> dipakai <img>/<video> di UI biar bisa diputar langsung.
@@ -949,4 +946,38 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", disp)
 	w.Header().Set("Cache-Control", "no-store")
 	http.ServeContent(w, r, name, fi.ModTime(), f)
+}
+
+// extraMimeTypes menambal tipe media yang nggak ada di tabel bawaan Go dan
+// nggak ada di /etc/mime.types (Termux/Android nggak punya file itu). Tanpa
+// ini .aac/.m4b/.mkv balik "application/octet-stream" → elemen <audio>/<video>
+// di browser nggak mau memutar.
+var extraMimeTypes = map[string]string{
+	".aac":  "audio/aac",
+	".m4a":  "audio/mp4",
+	".m4b":  "audio/mp4",
+	".m4r":  "audio/mp4",
+	".mp3":  "audio/mpeg",
+	".oga":  "audio/ogg",
+	".ogg":  "audio/ogg",
+	".opus": "audio/ogg",
+	".flac": "audio/flac",
+	".wav":  "audio/wav",
+	".weba": "audio/webm",
+	".m4v":  "video/mp4",
+	".mkv":  "video/x-matroska",
+	".ogv":  "video/ogg",
+}
+
+// contentTypeFor menebak MIME dari nama file: tabel sistem/bawaan Go dulu,
+// lalu peta cadangan di atas, terakhir application/octet-stream.
+func contentTypeFor(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	if ct, ok := extraMimeTypes[ext]; ok {
+		return ct
+	}
+	return "application/octet-stream"
 }
