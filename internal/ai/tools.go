@@ -34,8 +34,9 @@ type TelegramClient interface {
 	GetTelegramUser(ctx context.Context, userID int64) (*TelegramUserInfo, error)
 }
 
-// maxSendFileBytes caps telegram_sendfile uploads (Telegram bots allow 50MB).
-const maxSendFileBytes = 20 << 20
+// maxSendFileBytes caps telegram_sendfile uploads (Telegram bots allow 50MB;
+// 49MB keeps just under the 50 MiB Bot API hard limit).
+const maxSendFileBytes = 49 << 20
 
 // BuildTools returns 14 tools by default: file tools (read_file, write_file,
 // list_dir, edit_file, edit_file_by_line, append_file) + run_shell_command + Telegram tools

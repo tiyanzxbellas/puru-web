@@ -137,7 +137,7 @@ var allOutputs = map[string]string{
 	// telegram_sendfile / telegram_getuser.
 	"telegram_sendfile.unavailable": "telegram_sendfile is only available in Telegram chat",
 	"telegram_sendfile.is_dir":      "path is a directory, not a file",
-	"telegram_sendfile.too_large":   "file too large: %s (max 20MB)",
+	"telegram_sendfile.too_large":   "file too large: %s (max 49MB)",
 	"telegram_getuser.unavailable":  "telegram_getuser is only available in Telegram chat",
 
 	// web_fetch.

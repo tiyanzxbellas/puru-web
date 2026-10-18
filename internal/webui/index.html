@@ -226,6 +226,9 @@ main{flex:1; overflow-y:auto; padding:18px 12px 8px; scroll-behavior:smooth}
 .fp-row a{background:var(--accent2); color:#fff; text-decoration:none; border-radius:8px;
   padding:5px 10px; font-size:12px; font-weight:600; white-space:nowrap}
 .fp-row a:hover{background:#2ea043}
+.fp-row .acts{display:flex; gap:6px}
+.fp-thumb{width:44px; height:44px; object-fit:cover; border-radius:8px; flex:0 0 44px; background:#000}
+.fmedia{max-width:100%; max-height:300px; border-radius:10px; display:block; background:#000; cursor:pointer; margin-bottom:2px}
 .fp-empty{color:var(--muted); font-size:12.5px; padding:14px 12px; line-height:1.6}
 @media(max-width:520px){.hide-sm{display:none}}
 /* ---- composer ---- */
@@ -770,6 +773,28 @@ function withAttachments(t){
   const head = attachments.map(a=>"[Lampiran: " + a.path + "]").join("\n");
   return t ? head + "\n" + t : head;
 }
+var IMG_EXT = ["png","jpg","jpeg","gif","webp","bmp","avif","svg"];
+var VID_EXT = ["mp4","webm","mov","m4v","ogv","mkv"];
+function extOf(name){ var m = /\.([a-z0-9]+)$/i.exec(name || ""); return m ? m[1].toLowerCase() : ""; }
+function isImage(name){ return IMG_EXT.indexOf(extOf(name)) >= 0; }
+function isVideo(name){ return VID_EXT.indexOf(extOf(name)) >= 0; }
+function inlineUrl(u){ u = u || ""; return u + (u.indexOf("?") >= 0 ? "&" : "?") + "inline=1"; }
+function mediaEl(f){
+  if(isImage(f.name)){
+    const img = document.createElement("img");
+    img.className = "fmedia"; img.src = inlineUrl(f.url); img.loading = "lazy";
+    img.alt = f.name || "gambar"; img.title = "Klik untuk buka ukuran penuh";
+    img.addEventListener("click", ()=>{ window.open(inlineUrl(f.url), "_blank"); });
+    return img;
+  }
+  if(isVideo(f.name)){
+    const v = document.createElement("video");
+    v.className = "fmedia"; v.src = inlineUrl(f.url); v.controls = true;
+    v.preload = "metadata"; v.playsInline = true;
+    return v;
+  }
+  return null;
+}
 function addFiles(el, files){
   if(!el || !files || !files.length) return;
   const body = el.querySelector(".body");
@@ -777,6 +802,8 @@ function addFiles(el, files){
   const box = document.createElement("div");
   box.className = "msg-files";
   files.forEach(f=>{
+    const prev = mediaEl(f);
+    if(prev) box.appendChild(prev);
     const a = document.createElement("a");
     a.className = "fchip";
     a.href = f.url; a.setAttribute("download", f.name || "");
@@ -821,11 +848,21 @@ async function openFiles(){
     items.forEach(f=>{
       const row = document.createElement("div");
       row.className = "fp-row";
-      row.innerHTML = '<span class="ic">\uD83D\uDCC4</span><span class="meta"><span class="n"></span><span class="d"></span></span><a>\u2b07 Ambil</a>';
+      row.innerHTML = '<span class="ic">\uD83D\uDCC4</span><span class="meta"><span class="n"></span><span class="d"></span></span><span class="acts"><a class="play" target="_blank" rel="noopener">\u25b6</a><a class="dl">\u2b07</a></span>';
       row.querySelector(".n").textContent = f.name || "file";
       row.querySelector(".d").textContent = [fmtSize(f.size), f.time, f.src].filter(Boolean).join(" \u00b7 ");
-      const a = row.querySelector("a");
-      a.href = f.url; a.setAttribute("download", "");
+      const ic = row.querySelector(".ic");
+      if(isImage(f.name)){
+        const im = document.createElement("img");
+        im.className = "fp-thumb"; im.src = inlineUrl(f.url); im.loading = "lazy"; im.alt = f.name || "";
+        ic.replaceWith(im);
+      }
+      const pl = row.querySelector(".play"), dl = row.querySelector(".dl");
+      if(isImage(f.name) || isVideo(f.name)){
+        pl.href = inlineUrl(f.url);
+        pl.textContent = isVideo(f.name) ? "\u25b6 Putar" : "\uD83D\uDDBC Buka";
+      } else { pl.remove(); }
+      dl.href = f.url; dl.setAttribute("download", "");
       body.appendChild(row);
     });
   }catch(e){

@@ -58,8 +58,8 @@ const DefaultWebChatID int64 = 9000000001
 // maxMessageBytes caps a single user message.
 const maxMessageBytes = 256 << 10
 
-// maxUploadBytes caps one uploaded file (same 20MB ceiling as Telegram).
-const maxUploadBytes = 20 << 20
+// maxUploadBytes caps one uploaded file (49MB; under Telegram's 50 MiB).
+const maxUploadBytes = 49 << 20
 
 // maxRun caps one agent run so a hung model call never wedges the slot.
 // Override with PURUWEB_MAX_RUN_MIN (minute); default 60 because heavy tasks
@@ -809,9 +809,14 @@ func (s *Server) handleFile(w http.ResponseWriter, r *http.Request) {
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	disp := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	kind := "attachment"
+	if r.URL.Query().Get("inline") != "" {
+		// ?inline=1 -> dipakai <img>/<video> di UI biar bisa diputar langsung.
+		kind = "inline"
+	}
+	disp := mime.FormatMediaType(kind, map[string]string{"filename": name})
 	if disp == "" {
-		disp = "attachment"
+		disp = kind
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", disp)
