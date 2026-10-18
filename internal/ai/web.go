@@ -1,0 +1,623 @@
+// Web tools: web_search via Google AI Studio (Gemini API with googleSearch
+// grounding, third-party, opt-in via config web_search.aistudio) with Exa
+// fallback (POST /search, opt-in via config web_search.exa),
+// web_fetch direct (stdlib net/http, no external API).
+// web_search is removed from the tool list unless at least one provider is
+// ready (active + credentials). Order is fixed: aistudio (0), exa (1) —
+// first ready error falls through to the next ready one.
+// No PuruBoy API anywhere. No new dependencies.
+package ai
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"html"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/purujawa06-bot/PURU-AI/internal/config"
+)
+
+const (
+	webSearchTimeout = 60 * time.Second
+	webFetchTimeout  = 120 * time.Second
+	defaultSearchN   = 5
+	// Default paginated fetch length (lines).
+	defaultFetchLines = 100
+	maxFetchLines     = 1000
+	webBrowserUA      = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+
+// aistudioAPIBase is a var (not const) so tests
+// can point it at httptest servers.
+var aistudioAPIBase = "https://generativelanguage.googleapis.com/v1beta"
+
+// exaAPIBase is a var (not const) so tests can point it at httptest servers.
+var exaAPIBase = "https://api.exa.ai"
+
+// allowPrivateFetchHost lets tests point direct fetch at httptest servers
+// (127.0.0.1). Always false in production.
+var allowPrivateFetchHost = false
+
+type webResult struct {
+	Title   string
+	URL     string
+	Snippet string
+}
+
+// aistudioContent is one Gemini generateContent message.
+type aistudioContent struct {
+	Role  string         `json:"role"`
+	Parts []aistudioPart `json:"parts"`
+}
+
+type aistudioPart struct {
+	Text string `json:"text"`
+}
+
+type aistudioGenerateRequest struct {
+	Contents []aistudioContent `json:"contents"`
+	Tools    []map[string]any  `json:"tools"`
+}
+
+type aistudioWebLink struct {
+	URI   string `json:"uri"`
+	Title string `json:"title"`
+}
+
+type aistudioChunk struct {
+	Web *aistudioWebLink `json:"web"`
+}
+
+type aistudioCandidate struct {
+	Content struct {
+		Parts []aistudioPart `json:"parts"`
+		Role  string         `json:"role"`
+	} `json:"content"`
+	GroundingMetadata struct {
+		GroundingChunks []aistudioChunk `json:"groundingChunks"`
+	} `json:"groundingMetadata"`
+}
+
+type aistudioResponse struct {
+	Candidates []aistudioCandidate `json:"candidates"`
+	Error      *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Status  string `json:"status"`
+	} `json:"error"`
+}
+
+var (
+	webScriptRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>|<noscript[^>]*>.*?</noscript>`)
+	webTagRe    = regexp.MustCompile(`(?s)<[^>]*>`)
+	webSpaceRe  = regexp.MustCompile(`\s+`)
+)
+
+// clampSearchCount defaults to 5 when unset (0), clamps 1-10.
+func clampSearchCount(n int64) int {
+	if n == 0 {
+		return defaultSearchN
+	}
+	if n < 1 {
+		return 1
+	}
+	if n > 10 {
+		return 10
+	}
+	return int(n)
+}
+
+// clampFetchStartLine floors start_line <1 to 1.
+func clampFetchStartLine(n int64) int {
+	if n < 1 {
+		return 1
+	}
+	return int(n)
+}
+
+// clampFetchLength defaults to 100 when unset (0), clamps 1-1000.
+func clampFetchLength(n int64) int {
+	if n == 0 {
+		return defaultFetchLines
+	}
+	if n < 1 {
+		return 1
+	}
+	if n > maxFetchLines {
+		return maxFetchLines
+	}
+	return int(n)
+}
+
+func validateSearchQuery(q string) error {
+	if strings.TrimSpace(q) == "" {
+		return outputErr("web_search.query_required")
+	}
+	return nil
+}
+
+// validateFetchURL rejects non-http(s), empty host, and local/private hosts.
+func validateFetchURL(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", outputErr("web_fetch.url_required")
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", outputErr("web_fetch.invalid_url", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", outputErr("web_fetch.scheme_rejected", u.Scheme)
+	}
+	if u.Host == "" {
+		return "", outputErr("web_fetch.host_required")
+	}
+	host := u.Hostname()
+	if !allowPrivateFetchHost && isPrivateHost(host) {
+		return "", outputErr("web_fetch.private_rejected", host)
+	}
+	return s, nil
+}
+
+func isPrivateHost(host string) bool {
+	h := strings.ToLower(strings.Trim(strings.TrimSpace(host), "[]"))
+	if h == "" || h == "localhost" || h == "localhost.localdomain" ||
+		h == "0.0.0.0" || h == "::1" || h == "::" {
+		return true
+	}
+	if strings.HasSuffix(h, ".local") || strings.HasSuffix(h, ".localhost") ||
+		strings.HasSuffix(h, ".internal") || strings.HasSuffix(h, ".lan") {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+	}
+	if strings.HasPrefix(h, "127.") || strings.HasPrefix(h, "10.") || strings.HasPrefix(h, "192.168.") {
+		return true
+	}
+	if strings.HasPrefix(h, "172.") {
+		rest := strings.TrimPrefix(h, "172.")
+		n := 0
+		for i := 0; i < len(rest); i++ {
+			c := rest[i]
+			if c < '0' || c > '9' {
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if n >= 16 && n <= 31 {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeFetchLines collapses horizontal whitespace per line, drops empty
+// lines, and joins with "\n" so start_line/length paginate by lines.
+func normalizeFetchLines(s string) string {
+	var out []string
+	for _, ln := range strings.Split(s, "\n") {
+		ln = strings.TrimSpace(webSpaceRe.ReplaceAllString(ln, " "))
+		if ln != "" {
+			out = append(out, ln)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// stripHTMLToText removes script/style, tags, unescapes entities,
+// and collapses whitespace per line (newlines preserved for pagination).
+func stripHTMLToText(s string) string {
+	s = webScriptRe.ReplaceAllString(s, "\n")
+	s = webTagRe.ReplaceAllString(s, "\n")
+	s = html.UnescapeString(s)
+	return normalizeFetchLines(s)
+}
+
+// aistudioSearchURL builds the Gemini generateContent URL for a model:
+// POST {base}/models/{model}:generateContent?key=...
+func aistudioSearchURL(model string) string {
+	base := strings.TrimRight(strings.TrimSpace(aistudioAPIBase), "/")
+	model = strings.TrimSpace(model)
+	if strings.HasPrefix(model, "models/") {
+		model = strings.TrimPrefix(model, "models/")
+	}
+	return base + "/models/" + model + ":generateContent"
+}
+
+// fetchAIStudioSearch calls Google AI Studio (Gemini API) with the
+// googleSearch grounding tool and maps the answer + grounding chunks
+// to webResult. The model name is free-form (any AI Studio model that
+// supports googleSearch, e.g. gemini-2.5-flash or gemma-4-31b-it).
+func fetchAIStudioSearch(ctx context.Context, cfg config.AIStudioSearchConfig, query string, limit int) ([]webResult, error) {
+	model := strings.TrimSpace(cfg.Model)
+	key := strings.TrimSpace(cfg.APIKey)
+	if model == "" || key == "" {
+		return nil, outputErr("web_search.aistudio_unconfigured")
+	}
+	payload, err := json.Marshal(aistudioGenerateRequest{
+		Contents: []aistudioContent{{
+			Role:  "user",
+			Parts: []aistudioPart{{Text: strings.TrimSpace(query)}},
+		}},
+		Tools: []map[string]any{{"googleSearch": map[string]any{}}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	ectx, cancel := context.WithTimeout(ctx, webSearchTimeout)
+	defer cancel()
+	endpoint := aistudioSearchURL(model) + "?key=" + url.QueryEscape(key)
+	req, err := http.NewRequestWithContext(ectx, "POST", endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", webBrowserUA)
+	client := &http.Client{} // Timeout via context above
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		msg := strings.TrimSpace(string(b))
+		if len(msg) > 500 {
+			msg = strings.TrimSpace(msg[:500])
+		}
+		var parsed aistudioResponse
+		if json.Unmarshal(b, &parsed) == nil && parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
+			msg = strings.TrimSpace(parsed.Error.Message)
+		}
+		return nil, outputErr("web_search.aistudio_http", resp.StatusCode, msg)
+	}
+	var sr aistudioResponse
+	if err := json.Unmarshal(b, &sr); err != nil {
+		return nil, outputErr("web_search.aistudio_bad_json", err)
+	}
+	if sr.Error != nil {
+		msg := strings.TrimSpace(sr.Error.Message)
+		if msg == "" {
+			msg = outputText("web_search.aistudio_api_error")
+		}
+		return nil, fmt.Errorf("%s", msg)
+	}
+	if len(sr.Candidates) == 0 {
+		return nil, outputErr("web_search.aistudio_no_candidates")
+	}
+	cand := sr.Candidates[0]
+	var answer strings.Builder
+	for _, p := range cand.Content.Parts {
+		if strings.TrimSpace(p.Text) != "" {
+			if answer.Len() > 0 {
+				answer.WriteString("\n")
+			}
+			answer.WriteString(strings.TrimSpace(p.Text))
+		}
+	}
+	answerText := strings.TrimSpace(answer.String())
+	seen := map[string]bool{}
+	var out []webResult
+	for _, c := range cand.GroundingMetadata.GroundingChunks {
+		if len(out) >= limit {
+			break
+		}
+		if c.Web == nil {
+			continue
+		}
+		u := strings.TrimSpace(c.Web.URI)
+		title := strings.TrimSpace(c.Web.Title)
+		if u == "" || seen[u] {
+			continue
+		}
+		// Grounding redirect links resolve to the real page; keep them
+		// but only when they look like http(s). Titles may be bare
+		// domains — accept them, fall back to the URL.
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			continue
+		}
+		if title == "" {
+			title = u
+		}
+		seen[u] = true
+		out = append(out, webResult{Title: title, URL: u})
+	}
+	// When grounding returns no links (e.g. pure knowledge answer),
+	// surface the grounded answer itself as a single result so the
+	// tool still returns something useful.
+	if len(out) == 0 {
+		if answerText == "" {
+			return nil, outputErr("web_search.no_results")
+		}
+		snip := answerText
+		if len([]rune(snip)) > 1500 {
+			snip = strings.TrimSpace(string([]rune(snip)[:1500]))
+		}
+		return []webResult{{Title: outputText("web_search.answer_title"), URL: "", Snippet: snip}}, nil
+	}
+	// Attach a short excerpt of the grounded answer to the first result
+	// so the caller gets context even when chunks carry no snippets.
+	if answerText != "" {
+		snip := answerText
+		if len([]rune(snip)) > 600 {
+			snip = strings.TrimSpace(string([]rune(snip)[:600]))
+		}
+		out[0].Snippet = snip
+		if len(out) > limit {
+			out = out[:limit]
+		}
+	}
+	return out, nil
+}
+
+// exaSearchRequest is the POST /search body. Type auto lets Exa pick
+// neural/keyword; highlights give the snippet text per result.
+type exaSearchRequest struct {
+	Query      string         `json:"query"`
+	NumResults int            `json:"numResults"`
+	Type       string         `json:"type"`
+	Contents   map[string]any `json:"contents"`
+}
+
+type exaSearchResult struct {
+	Title      string   `json:"title"`
+	URL        string   `json:"url"`
+	Highlights []string `json:"highlights"`
+	Text       string   `json:"text"`
+}
+
+type exaSearchResponse struct {
+	Results []exaSearchResult `json:"results"`
+}
+
+// fetchExaSearch calls POST {base}/search with x-api-key and maps
+// title/url/highlights to webResult. Highlights[0] becomes the snippet
+// (truncated to 600 runes, matching aistudio excerpt length).
+func fetchExaSearch(ctx context.Context, cfg config.ExaSearchConfig, query string, limit int) ([]webResult, error) {
+	key := strings.TrimSpace(cfg.APIKey)
+	if key == "" {
+		return nil, outputErr("web_search.exa_unconfigured")
+	}
+	payload, err := json.Marshal(exaSearchRequest{
+		Query:      strings.TrimSpace(query),
+		NumResults: limit,
+		Type:       "auto",
+		Contents:   map[string]any{"highlights": true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	ectx, cancel := context.WithTimeout(ctx, webSearchTimeout)
+	defer cancel()
+	base := strings.TrimRight(strings.TrimSpace(exaAPIBase), "/")
+	endpoint := base + "/search"
+	req, err := http.NewRequestWithContext(ectx, "POST", endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("x-api-key", key)
+	req.Header.Set("User-Agent", webBrowserUA)
+	client := &http.Client{} // Timeout via context above
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		msg := strings.TrimSpace(string(b))
+		if len(msg) > 500 {
+			msg = strings.TrimSpace(msg[:500])
+		}
+		return nil, outputErr("web_search.exa_http", resp.StatusCode, msg)
+	}
+	var sr exaSearchResponse
+	if err := json.Unmarshal(b, &sr); err != nil {
+		return nil, outputErr("web_search.exa_bad_json", err)
+	}
+	var out []webResult
+	for _, r := range sr.Results {
+		if len(out) >= limit {
+			break
+		}
+		u := strings.TrimSpace(r.URL)
+		title := strings.TrimSpace(r.Title)
+		if u == "" {
+			continue
+		}
+		if title == "" {
+			title = u
+		}
+		snip := ""
+		for _, h := range r.Highlights {
+			if strings.TrimSpace(h) != "" {
+				snip = strings.TrimSpace(h)
+				break
+			}
+		}
+		if snip == "" {
+			snip = strings.TrimSpace(r.Text)
+		}
+		if len([]rune(snip)) > 600 {
+			snip = strings.TrimSpace(string([]rune(snip)[:600]))
+		}
+		out = append(out, webResult{Title: title, URL: u, Snippet: snip})
+	}
+	if len(out) == 0 {
+		return nil, outputErr("web_search.no_results")
+	}
+	return out, nil
+}
+
+// runWebSearch tries each ready provider in fixed order: aistudio (0),
+// exa (1). First success wins; first error falls through to the next
+// ready provider. Only the last error is returned when all fail.
+func runWebSearch(ctx context.Context, cfg config.WebSearchConfig, query string, count int) (string, error) {
+	if err := validateSearchQuery(query); err != nil {
+		return "", err
+	}
+	if count <= 0 {
+		count = defaultSearchN
+	}
+	if count > 10 {
+		count = 10
+	}
+	if !cfg.AIStudio.Ready() && !cfg.Exa.Ready() {
+		return "", outputErr("web_search.disabled")
+	}
+	var errs []string
+	if cfg.AIStudio.Ready() {
+		res, err := fetchAIStudioSearch(ctx, cfg.AIStudio, query, count)
+		if err == nil && len(res) > 0 {
+			return formatWebResults(res), nil
+		}
+		if err == nil {
+			err = outputErr("web_search.no_results")
+		}
+		errs = append(errs, outputf("web_search.aistudio_prefix", err.Error()))
+	}
+	if cfg.Exa.Ready() {
+		res, err := fetchExaSearch(ctx, cfg.Exa, query, count)
+		if err == nil && len(res) > 0 {
+			return formatWebResults(res), nil
+		}
+		if err == nil {
+			err = outputErr("web_search.no_results")
+		}
+		errs = append(errs, outputf("web_search.exa_prefix", err.Error()))
+	}
+	return "", outputErr("web_search.failed", strings.Join(errs, "; "))
+}
+
+func formatWebResults(res []webResult) string {
+	var sb strings.Builder
+	for i, r := range res {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		if strings.TrimSpace(r.URL) == "" {
+			fmt.Fprintf(&sb, "%d. %s", i+1, r.Title)
+		} else {
+			fmt.Fprintf(&sb, "%d. %s - %s", i+1, r.Title, r.URL)
+		}
+		if strings.TrimSpace(r.Snippet) != "" {
+			sb.WriteString("\n" + r.Snippet)
+		}
+	}
+	return sb.String()
+}
+
+// normalizeFetchSection defaults to "text", accepts "html"/"text".
+func normalizeFetchSection(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "html" {
+		return "html"
+	}
+	return "text"
+}
+
+// fetchDirectFetch fetches URL directly (no external API) and returns
+// paginated content. section "text" strips HTML to plain text,
+// section "html" returns raw HTML. startLine/length operate on lines.
+func fetchDirectFetch(ctx context.Context, rawURL, section string, startLine, length int) (string, error) {
+	clean, err := validateFetchURL(rawURL)
+	if err != nil {
+		return "", err
+	}
+	startLine = clampFetchStartLine(int64(startLine))
+	length = clampFetchLength(int64(length))
+	section = normalizeFetchSection(section)
+
+	ectx, cancel := context.WithTimeout(ctx, webFetchTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ectx, "GET", clean, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", webBrowserUA)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	client := &http.Client{
+		Timeout: webFetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return outputErr("web_fetch.too_many_redirects")
+			}
+			if !allowPrivateFetchHost && isPrivateHost(req.URL.Hostname()) {
+				return outputErr("web_fetch.redirect_rejected", req.URL.Hostname())
+			}
+			return nil
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
+		return "", outputErr("web_fetch.http_error", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return "", err
+	}
+	raw := strings.TrimSpace(string(b))
+	if raw == "" {
+		return "", outputErr("web_fetch.page_empty")
+	}
+	var full string
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if section == "html" {
+		full = normalizeFetchLines(raw)
+	} else {
+		if strings.Contains(ct, "html") || strings.Contains(raw, "<") {
+			full = strings.TrimSpace(stripHTMLToText(raw))
+		} else {
+			full = normalizeFetchLines(raw)
+		}
+		if full == "" {
+			return "", outputErr("web_fetch.page_empty")
+		}
+	}
+	lines := strings.Split(full, "\n")
+	total := len(lines)
+	if startLine > total {
+		return "", outputErr("web_fetch.start_beyond", startLine, total)
+	}
+	startIdx := startLine - 1
+	endIdx := startIdx + length
+	if endIdx > total {
+		endIdx = total
+	}
+	page := strings.TrimSpace(strings.Join(lines[startIdx:endIdx], "\n"))
+	if page == "" {
+		return "", outputErr("web_fetch.page_empty")
+	}
+	if endIdx < total {
+		page += outputf("web_fetch.more_pages", total, startLine, section, endIdx+1, length)
+	}
+	return page, nil
+}
+
+// runWebFetch fetches paginated text/html directly (stdlib only).
+func runWebFetch(ctx context.Context, rawURL, section string, startLine, length int) (string, error) {
+	return fetchDirectFetch(ctx, rawURL, section, clampFetchStartLine(int64(startLine)), clampFetchLength(int64(length)))
+}
