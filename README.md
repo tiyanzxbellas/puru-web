@@ -271,3 +271,22 @@ Telegram menolak, otomatis fallback jadi dokumen biasa.
 
 **Kalau videonya kegedean (>49 MB):** agent bisa menurunkan resolusi /
 kompres dulu, atau kirim sebagai link unduh (`downloads/` tetap sumbernya).
+
+### 🌍 Biar bisa dibuka orang lain / dari internet
+
+`127.0.0.1:18099` cuma bisa dibuka dari HP sendiri. Buat LAN, tunnel
+(cloudflared / ngrok / SSH / localtunnel), hosting VPS / Docker, plus
+**peringatan keamanan (web ini belum ada login)** — semua ada di
+[`WEB-HOSTING.md`](WEB-HOSTING.md).
+
+Cara cepat:
+
+```bash
+pkg install -y cloudflared
+./run_web.sh                        # terminal 1
+./expose.sh cloudflared             # terminal 2 -> https://xxxx.trycloudflare.com
+```
+
+> `puruweb` belum punya autentikasi. Siapa pun yang dapat URL-nya bisa
+> ngobrol (pakai kuota model kamu), baca `downloads/`, upload file, dan
+> menjalankan perintah shell di HP. Jangan dibagikan ke publik.
