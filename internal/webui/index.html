@@ -107,6 +107,25 @@ svg{display:block; flex:0 0 auto}
 .sb-item .sb-t{font-size:13px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.1px}
 .sb-item .sb-m{font-size:10.5px;color:var(--muted);letter-spacing:.2px}
 .sb-empty{color:var(--muted);font-size:12px;padding:10px 14px;line-height:1.6}
+.sb-label{display:flex;align-items:center;justify-content:space-between}
+.sb-lab-btn{background:none;border:none;color:var(--muted);font:600 10.5px/1 var(--font);letter-spacing:.9px;text-transform:uppercase;cursor:pointer;padding:4px 7px;border-radius:7px;margin-right:11px;transition:all .16s var(--ease)}
+.sb-lab-btn:hover{color:var(--text);background:rgba(255,255,255,.05)}
+.sb-bulkbar{display:flex;align-items:center;gap:6px;margin:2px 12px 8px;padding:7px 9px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface-2);font-size:11.5px;color:var(--text-2)}
+.sb-bulkbar[hidden]{display:none}
+.sb-bulkbar .bc{flex:1;letter-spacing:.2px}
+.sb-bulkbar button{background:rgba(255,255,255,.05);border:1px solid var(--line-2);color:var(--text-2);border-radius:8px;padding:5px 9px;font:600 11px/1 var(--font);cursor:pointer;transition:all .16s var(--ease)}
+.sb-bulkbar button:hover{border-color:var(--accent-line);color:var(--text)}
+.sb-bulkbar button.danger{color:var(--danger);border-color:rgba(242,112,122,.4);background:rgba(242,112,122,.1)}
+.sb-check{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-2);display:flex;align-items:center;justify-content:center;font-size:10px;line-height:1;color:transparent;transition:all .16s var(--ease)}
+.sb-item.picked{background:var(--accent-soft);border-color:var(--accent-line)}
+.sb-item.picked .sb-check{background:var(--accent);border-color:var(--accent);color:#0a0d13}
+.sb-item:active{transform:scale(.994)}
+#sbMenu{position:fixed;z-index:72;display:none;min-width:196px;background:var(--surface);border:1px solid var(--line-2);border-radius:12px;box-shadow:var(--shadow-2);padding:6px}
+#sbMenu.show{display:block;animation:enter .16s var(--ease)}
+#sbMenu button{display:flex;align-items:center;gap:10px;width:100%;background:none;border:none;color:var(--text);font:550 12.5px/1 var(--font);padding:10px 10px;border-radius:8px;cursor:pointer;text-align:left;transition:background .14s var(--ease)}
+#sbMenu button:hover{background:rgba(255,255,255,.055)}
+#sbMenu button.danger{color:var(--danger)}
+#sbMenu button.danger:hover{background:rgba(242,112,122,.1)}
 .sb-skel{height:44px;border-radius:10px;margin:4px 6px;background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.09),rgba(255,255,255,.04));background-size:220% 100%;animation:shimmer 1.4s infinite linear}
 @keyframes shimmer{from{background-position:120% 0}to{background-position:-120% 0}}
 .sb-foot{
@@ -160,7 +179,6 @@ svg{display:block; flex:0 0 auto}
 .hbtn:active,.icon-btn:active{transform:scale(.96)}
 .icon-btn.danger:hover{border-color:rgba(242,112,122,.5);color:var(--danger);background:rgba(242,112,122,.1)}
 #btn-menu{display:none}
-#btn-fresh.on{color:var(--accent);border-color:var(--accent-line);background:var(--accent-soft)}
 
 main{flex:1;overflow-y:auto;padding:24px 14px 10px;scroll-behavior:smooth;overscroll-behavior:contain}
 .wrap{max-width:840px;margin:0 auto;display:flex;flex-direction:column;gap:20px}
@@ -420,7 +438,12 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       Chat baru
     </button>
-    <div class="sb-label">Riwayat</div>
+    <div class="sb-label"><span>Riwayat</span><button class="sb-lab-btn" id="btn-bulk" title="Hapus beberapa riwayat">Pilih</button></div>
+    <div class="sb-bulkbar" id="bulkbar" hidden>
+      <span class="bc" id="bulk-count">pilih riwayat</span>
+      <button id="bulk-all">Semua</button>
+      <button class="danger" id="bulk-del">Hapus</button>
+    </div>
     <div class="sb-list" id="chat-list"></div>
     <div class="sb-foot" id="sb-foot"><span class="dot"></span><span id="st-text">memuat…</span></div>
   </aside>
@@ -438,7 +461,6 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
         <div class="status"><i></i><span id="chat-status">siap</span></div>
       </div>
       <div class="spacer"></div>
-      <button class="hbtn" id="btn-fresh" title="Mode memori"></button>
       <button class="icon-btn haslbl" id="btn-files" title="File: unduhan Puru & kiriman kamu" aria-label="File">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
         <span class="lbl">File</span>
@@ -473,6 +495,18 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
 
 </div>
 
+<div id="sbMenu">
+  <button id="sbMenu-del" class="danger">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12"/></svg>
+    <span>Hapus riwayat ini</span>
+  </button>
+  <button id="sbMenu-bulk">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+    <span>Hapus beberapa…</span>
+  </button>
+</div>
+
+
 <div id="filesPanel">
   <div class="fp-card">
     <div class="fp-head">
@@ -501,6 +535,10 @@ const wrap = $("#wrap"), main = $("#main"), input = $("#input"), send = $("#send
 const sidebar = $("#sidebar"), backdrop = $("#backdrop"), chatList = $("#chat-list"), sbFoot = $("#sb-foot");
 const chatHeader = $("#chat-header"), topbar = $("#topbar"), composer = $("#composer");
 let chatId = 0;
+let currentChatIds = [];
+let bulkMode = false;
+const picked = new Set();
+let pendingChat = 0;
 let busy = false;
 let polling = false;
 let gen = 0;
@@ -544,24 +582,10 @@ function syncStatus(){
   sbFoot.classList.toggle("busy", running);
 }
 
-const btnFresh = $("#btn-fresh");
-function renderFresh(){
-  if(!btnFresh) return;
-  btnFresh.innerHTML = freshMode
-    ? IC.spark + '<span class="lbl">Fresh</span>'
-    : IC.brain + '<span class="lbl">Memori</span>';
-  btnFresh.classList.toggle("on", freshMode);
-  btnFresh.title = freshMode
-    ? "Chat ini mulai dari nol (tanpa MEMORY.md & ringkasan). Klik buat pakai memori."
-    : "Memori jangka panjang ON. Klik buat mode fresh (mulai dari nol).";
-}
-async function toggleFresh(){
-  const want = !freshMode;
-  try{
-    const j = await api("/api/fresh", {method:"POST", body:JSON.stringify({chat_id:chatId, fresh:want})});
-    freshMode = !!j.fresh; renderFresh();
-  }catch(e){ alert("Gagal ganti mode: " + e.message); }
-}
+/* mode memori/fresh tidak ditampilkan di UI: chat baru & hapus riwayat
+   otomatis mulai dari nol (mode fresh), sesuai ATURAN-PURU.md. */
+function renderFresh(){}
+function toggleFresh(){}
 function openSidebar(){ sidebar.classList.add("open"); backdrop.classList.add("show"); }
 function closeSidebar(){ sidebar.classList.remove("open"); backdrop.classList.remove("show"); }
 
@@ -876,10 +900,13 @@ async function loadChats(){
     });
   }catch(e){}
   chatList.innerHTML = "";
+  currentChatIds = list.map(c=>Number(c.id));
+  renderBulkBar();
   if(!list.length){ chatList.innerHTML = '<div class="sb-empty">Belum ada riwayat. Mulai percakapan baru buat nongol di sini.</div>'; return; }
   list.forEach(c=>{
+    const id = Number(c.id);
     const b = document.createElement("button");
-    b.className = "sb-item" + (Number(c.id) === chatId ? " active" : "");
+    b.className = "sb-item" + (id === chatId ? " active" : "") + (picked.has(id) ? " picked" : "");
     const t = document.createElement("span");
     t.className = "sb-t";
     t.textContent = c.title || "(tanpa judul)";
@@ -887,9 +914,101 @@ async function loadChats(){
     m.className = "sb-m";
     m.textContent = (c.updated || "") + (c.messages ? " · " + c.messages + " pesan" : "");
     b.appendChild(t); b.appendChild(m);
-    b.addEventListener("click", ()=> openChat(Number(c.id)));
+    if(bulkMode){
+      const ck = document.createElement("span");
+      ck.className = "sb-check";
+      ck.textContent = "✓";
+      b.appendChild(ck);
+    }
+    b.addEventListener("click", ()=>{
+      if(bulkMode){ togglePick(id, b); return; }
+      openChat(id);
+    });
+    if(!bulkMode) attachLongPress(b, id);
     chatList.appendChild(b);
   });
+}
+
+/* ---------------- riwayat: hapus 1-1 (tekan lama) & hapus massal ---------------- */
+const sbMenu = $("#sbMenu");
+function hideMenu(){ if(sbMenu) sbMenu.classList.remove("show"); }
+function showMenu(x, y, id){
+  if(!sbMenu) return;
+  pendingChat = id;
+  sbMenu.classList.add("show");
+  const r = sbMenu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, window.innerWidth - r.width - 10));
+  const top = Math.max(8, Math.min(y, window.innerHeight - r.height - 10));
+  sbMenu.style.left = left + "px";
+  sbMenu.style.top = top + "px";
+}
+function attachLongPress(el, id){
+  let timer = null;
+  const start = (e)=>{
+    if(bulkMode || !e.isPrimary) return;
+    const x = e.clientX, y = e.clientY;
+    timer = setTimeout(()=>{ timer = null; showMenu(x, y, id); }, 520);
+  };
+  const cancel = ()=>{ if(timer){ clearTimeout(timer); timer = null; } };
+  el.addEventListener("pointerdown", start);
+  el.addEventListener("pointermove", cancel);
+  el.addEventListener("pointerup", cancel);
+  el.addEventListener("pointerleave", cancel);
+  el.addEventListener("pointercancel", cancel);
+  el.addEventListener("contextmenu", (e)=>{ e.preventDefault(); cancel(); showMenu(e.clientX, e.clientY, id); });
+}
+function togglePick(id, el){
+  if(picked.has(id)) picked.delete(id); else picked.add(id);
+  el.classList.toggle("picked", picked.has(id));
+  renderBulkBar();
+}
+function renderBulkBar(){
+  const bar = $("#bulkbar");
+  if(bar) bar.hidden = !bulkMode;
+  const c = $("#bulk-count");
+  if(c) c.textContent = picked.size ? (picked.size + " dipilih") : "pilih riwayat";
+  const btn = $("#btn-bulk");
+  if(btn) btn.textContent = bulkMode ? "Batal" : "Pilih";
+}
+function toggleBulk(){
+  bulkMode = !bulkMode;
+  picked.clear();
+  hideMenu();
+  renderBulkBar();
+  loadChats();
+}
+async function applyDelete(ids){
+  ids = (ids || []).map(Number).filter(Boolean);
+  if(!ids.length) return;
+  try{
+    const j = await api("/api/delete_chats", {method:"POST", body:JSON.stringify({chat_ids:ids})});
+    const gone = (j.deleted || []).map(Number);
+    const skipped = (j.skipped || []).length;
+    gone.forEach(id=> picked.delete(id));
+    bulkMode = false;
+    hideMenu();
+    renderBulkBar();
+    if(gone.indexOf(Number(chatId)) >= 0){
+      gen++; polling = false; busy = false; send.disabled = false; syncStatus();
+      wrap.innerHTML = "";
+      await newChat();
+    } else {
+      await loadChats();
+    }
+    if(skipped) alert(skipped + " riwayat dilewati karena sedang diproses. Coba lagi nanti.");
+  }catch(e){ alert("Gagal hapus: " + e.message); }
+}
+async function deleteOneChat(){
+  const id = pendingChat;
+  hideMenu();
+  if(!id) return;
+  if(!confirm("Hapus riwayat ini? Chat ini hilang dari daftar (salinan masih disimpan di server).")) return;
+  await applyDelete([id]);
+}
+async function bulkDelete(){
+  if(!picked.size){ alert("Pilih dulu riwayat yang mau dihapus."); return; }
+  if(!confirm("Hapus " + picked.size + " riwayat terpilih? Chat-nya hilang dari daftar (salinan masih disimpan di server).")) return;
+  await applyDelete(Array.from(picked));
 }
 
 /* nungguin balasan AI yang masih diproses server (reload pas AI mikir) */
@@ -1163,6 +1282,24 @@ if($("#btn-files")) $("#btn-files").addEventListener("click", openFiles);
 if($("#fp-close")) $("#fp-close").addEventListener("click", ()=> $("#filesPanel").classList.remove("show"));
 if($("#filesPanel")) $("#filesPanel").addEventListener("click", e=>{ if(e.target.id === "filesPanel") $("#filesPanel").classList.remove("show"); });
 
+/* riwayat: hapus 1-1 & massal */
+if($("#sbMenu-del")) $("#sbMenu-del").addEventListener("click", deleteOneChat);
+if($("#sbMenu-bulk")) $("#sbMenu-bulk").addEventListener("click", ()=>{
+  bulkMode = true;
+  if(pendingChat) picked.add(pendingChat);
+  hideMenu(); renderBulkBar(); loadChats();
+});
+if($("#btn-bulk")) $("#btn-bulk").addEventListener("click", toggleBulk);
+if($("#bulk-all")) $("#bulk-all").addEventListener("click", ()=>{
+  if(picked.size >= currentChatIds.length) picked.clear();
+  else currentChatIds.forEach(id=> picked.add(id));
+  renderBulkBar(); loadChats();
+});
+if($("#bulk-del")) $("#bulk-del").addEventListener("click", bulkDelete);
+document.addEventListener("pointerdown", e=>{
+  if(sbMenu && sbMenu.classList.contains("show") && !e.target.closest("#sbMenu")) hideMenu();
+}, true);
+
 /* ---------------- composer ---------------- */
 function autosize(){
   input.style.height = "auto";
@@ -1172,7 +1309,6 @@ input.addEventListener("input", autosize);
 send.addEventListener("click", ()=> sendMsg(input.value));
 
 /* ---------------- tombol ---------------- */
-$("#btn-fresh").addEventListener("click", toggleFresh);
 $("#btn-new").addEventListener("click", newChat);
 $("#btn-new-sb").addEventListener("click", newChat);
 $("#btn-clear").addEventListener("click", clearChat);

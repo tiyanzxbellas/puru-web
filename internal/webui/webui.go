@@ -11,6 +11,7 @@
 //	POST   /api/new_chat     → start a new chat slot
 //	GET    /api/chats        → list chat slots
 //	POST   /api/upload       -> upload a file for the agent (multipart field file)
+//	POST   /api/delete_chats -> delete one or many web chats (bulk history delete)
 //	GET    /api/files        -> list files under the workspace downloads/ folder
 //	GET    /api/file?path=   -> download one of those files (downloads/ only)
 //
@@ -231,6 +232,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/new_chat", s.handleNewChat)
 	mux.HandleFunc("/api/chats", s.handleChats)
 	mux.HandleFunc("/api/fresh", s.handleFresh)
+	mux.HandleFunc("/api/delete_chats", s.handleDeleteChats)
 	mux.HandleFunc("/api/upload", s.handleUpload)
 	mux.HandleFunc("/api/files", s.handleFiles)
 	mux.HandleFunc("/api/file", s.handleFile)
@@ -267,7 +269,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	// no-store: taruh UI di cache browser = user bisa lihat versi lama setelah update
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	_, _ = w.Write(indexHTML)
 }
 
@@ -579,6 +583,67 @@ func (s *Server) archiveHistory(chatID int64) {
 		return
 	}
 	log.Printf("webui trash: chat %d -> %s (%d bytes)", chatID, name, len(b))
+}
+
+type deleteChatsReq struct {
+	ChatIDs []int64 `json:"chat_ids"`
+	ChatID  int64   `json:"chat_id"`
+}
+
+// handleDeleteChats removes one or many web chat slots (riwayat) permanently.
+// Setiap slot disalin dulu ke <historydir>/.trash/ (archiveHistory) lalu dikosongkan,
+// jadi salah klik masih bisa dipulihkan dari server.
+func (s *Server) handleDeleteChats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	var req deleteChatsReq
+	if err := readJSON(r, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad json"})
+		return
+	}
+	ids := req.ChatIDs
+	if len(ids) == 0 && req.ChatID != 0 {
+		ids = []int64{req.ChatID}
+	}
+	if len(ids) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "no chat_id"})
+		return
+	}
+	if len(ids) > 500 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "terlalu banyak"})
+		return
+	}
+	deleted := []int64{}
+	skipped := []int64{}
+	for _, id := range ids {
+		// hanya slot web (jangan biarkan UI menghapus riwayat telegram)
+		if id < DefaultWebChatID || id > 9999999999 {
+			skipped = append(skipped, id)
+			continue
+		}
+		s.mu.Lock()
+		busy := s.busy[id]
+		s.mu.Unlock()
+		if busy {
+			skipped = append(skipped, id)
+			continue
+		}
+		s.archiveHistory(id)
+		_ = s.hist.Clear(id)
+		s.freshMu.Lock()
+		delete(s.fresh, id)
+		s.freshMu.Unlock()
+		s.filesMu.Lock()
+		delete(s.files, id)
+		s.filesMu.Unlock()
+		deleted = append(deleted, id)
+	}
+	s.saveFresh()
+	s.saveFiles()
+	log.Printf("webui delete_chats: %d dihapus, %d dilewati (busy)", len(deleted), len(skipped))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted, "skipped": skipped})
 }
 
 type freshReq struct {
