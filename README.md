@@ -211,6 +211,24 @@ gofmt -s -w .
 
 ---
 
+## 🧭 ATURAN-PURU.md & Mode fresh
+
+Repo ini menyuntik **ATURAN-PURU.md** ke system prompt setiap request.
+
+- **Selalu aktif** — kalau `<workspace>/ATURAN-PURU.md` ada, isinya ikut ke system prompt
+  di **semua channel** (web, Telegram, CLI), tepat setelah `AGENTS.md`.
+- **Auto-seed** — file-nya hilang? dibuat ulang dari
+  `internal/workspace/defaults/ATURAN-PURU.md` (file yang sudah ada tidak pernah ditimpa).
+- **Mode fresh** — *Chat baru* / *Hapus riwayat* / tombol 🧠 **Memori ↔ Fresh** →
+  run tanpa `memory/MEMORY.md` dan tanpa ringkasan konteks. Identitas (AGENTS/SOUL/USER)
+  + katalog skill tetap aktif.
+- **Ketik `fresh`** di kolom chat (kata tunggal, juga `/fresh` atau `/new`) = percakapan baru
+  dari nol — persis aturan di ATURAN-PURU.md pasal *Mode fresh*.
+- **CLI** — `puru chat` memakai loader workspace yang sama, jadi aturannya ikut terbaca juga.
+
+Isi file bebas diedit (bahasa aturan mas sendiri). Selama file-nya ada di workspace,
+aturan itu yang dipegang; kalau dihapus, sistem menulis ulang versi default-nya.
+
 ## 📜 License
 
 Distributed under the **MIT License**. See `LICENSE` for details.

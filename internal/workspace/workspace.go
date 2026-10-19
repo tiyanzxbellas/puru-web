@@ -12,8 +12,8 @@
 //	    context/   # PURU-specific conversation summaries, system-managed
 //	  skills/    # installed skills, one SKILL.md per skill (picoclaw-like)
 //
-// Bootstrap files (AGENTS.md, SOUL.md, USER.md) are injected into the system
-// prompt on every request. MEMORY.md holds lasting user facts written by the
+// Bootstrap files (AGENTS.md, SOUL.md, USER.md, and the optional ATURAN-PURU.md
+// rules file) are injected into the system prompt on every request. MEMORY.md holds lasting user facts written by the
 // agent itself. memory/context/ holds model-generated summaries and must never
 // be written by the agent directly.
 package workspace
@@ -51,6 +51,14 @@ var DefaultUserMD string
 //
 //go:embed defaults/MEMORY.md
 var DefaultMemoryMD string
+
+// DefaultRulesMD is seeded when the ATURAN-PURU.md rules file is missing.
+// It holds the always-on behavioural rules (identity, storage layout, "Mode
+// fresh", safety) and is injected into the system prompt on every request,
+// exactly like AGENTS.md/SOUL.md/USER.md.
+//
+//go:embed defaults/ATURAN-PURU.md
+var DefaultRulesMD string
 
 var skillNamePattern = regexp.MustCompile(`^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$`)
 
@@ -122,6 +130,10 @@ const (
 	FileSoul = "SOUL.md"
 	// FileUser holds workspace user profile, same name as picoclaw workspace/USER.md.
 	FileUser = "USER.md"
+	// FileRules holds the always-on behavioural rules (ATURAN-PURU.md). It is
+	// PURU-specific and optional: whenever the file exists it is injected into
+	// the system prompt on every request, in every channel.
+	FileRules = "ATURAN-PURU.md"
 	// FileMemory is the long-term memory file kept inside memory/
 	// (picoclaw-like: memory/MEMORY.md).
 	FileMemory = "MEMORY.md"
@@ -155,6 +167,9 @@ func SoulPath(workspace string) string { return filepath.Join(workspace, FileSou
 // UserPath returns <workspace>/USER.md.
 func UserPath(workspace string) string { return filepath.Join(workspace, FileUser) }
 
+// RulesPath returns <workspace>/ATURAN-PURU.md.
+func RulesPath(workspace string) string { return filepath.Join(workspace, FileRules) }
+
 // MemoryDir returns <workspace>/memory.
 func MemoryDir(workspace string) string { return filepath.Join(workspace, DirMemory) }
 
@@ -183,6 +198,9 @@ type Definition struct {
 	FrontmatterSkills []string
 	Soul              string
 	User              string
+	// Rules is the always-on behavioural rules (ATURAN-PURU.md). When the
+	// file exists it is injected right after the agent definition.
+	Rules string
 }
 
 // Load reads AGENTS.md (or AGENT.md fallback), SOUL.md, and USER.md.
@@ -204,6 +222,9 @@ func Load(workspace string) Definition {
 	if data, err := os.ReadFile(UserPath(workspace)); err == nil {
 		def.User = string(data)
 	}
+	if data, err := os.ReadFile(RulesPath(workspace)); err == nil {
+		def.Rules = string(data)
+	}
 	return def
 }
 
@@ -217,6 +238,9 @@ func (d Definition) Bootstrap() string {
 			label = FileAgents
 		}
 		sb.WriteString("## " + label + "\n\n" + d.AgentsBody + "\n\n")
+	}
+	if strings.TrimSpace(d.Rules) != "" {
+		sb.WriteString("## " + FileRules + "\n\n" + d.Rules + "\n\n")
 	}
 	if strings.TrimSpace(d.Soul) != "" {
 		sb.WriteString("## " + FileSoul + "\n\n" + d.Soul + "\n\n")
@@ -244,6 +268,7 @@ func Ensure(workspace string) error {
 		{filepath.Join(workspace, FileAgents), DefaultAgentsMD},
 		{filepath.Join(workspace, FileSoul), DefaultSoulMD},
 		{filepath.Join(workspace, FileUser), DefaultUserMD},
+		{filepath.Join(workspace, FileRules), DefaultRulesMD},
 		{filepath.Join(workspace, DirMemory, FileMemory), DefaultMemoryMD},
 	}
 	for _, s := range seed {

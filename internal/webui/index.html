@@ -154,6 +154,8 @@ svg{display:block; flex:0 0 auto}
 }
 .hbtn{padding:0 12px}
 .icon-btn{width:34px;padding:0}
+.icon-btn .lbl{display:none}
+@media(min-width:621px){.icon-btn.haslbl{width:auto;padding:0 11px}.icon-btn.haslbl .lbl{display:inline}}
 .hbtn:hover,.icon-btn:hover{border-color:var(--accent-line);color:var(--text);background:var(--accent-soft)}
 .hbtn:active,.icon-btn:active{transform:scale(.96)}
 .icon-btn.danger:hover{border-color:rgba(242,112,122,.5);color:var(--danger);background:rgba(242,112,122,.1)}
@@ -390,7 +392,8 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
 }
 @media(max-width:520px){
   .hide-sm{display:none!important}
-  .chat header .title strong{max-width:38vw}
+  .hbtn{padding:0 9px}
+  .chat header .title strong{max-width:26vw}
   .msg .body{max-width:94%}
 }
 @media(prefers-reduced-motion:reduce){
@@ -436,11 +439,13 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
       </div>
       <div class="spacer"></div>
       <button class="hbtn" id="btn-fresh" title="Mode memori"></button>
-      <button class="icon-btn" id="btn-files" title="File" aria-label="File">
+      <button class="icon-btn haslbl" id="btn-files" title="File: unduhan Puru & kiriman kamu" aria-label="File">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+        <span class="lbl">File</span>
       </button>
-      <button class="icon-btn" id="btn-new" title="Chat baru" aria-label="Chat baru">
+      <button class="icon-btn haslbl" id="btn-new" title="Chat baru (mode fresh, mulai dari nol)" aria-label="Chat baru">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="lbl">Chat baru</span>
       </button>
       <button class="icon-btn danger" id="btn-clear" title="Hapus riwayat chat ini" aria-label="Hapus riwayat">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M10 11v6M14 11v6"/></svg>
@@ -457,7 +462,7 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
         <button id="btn-attach" title="Lampirkan file" aria-label="Lampirkan file">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.4 3.4 0 014.8 4.8l-8.6 8.6a1.8 1.8 0 01-2.5-2.5l7.9-7.9"/></svg>
         </button>
-        <textarea id="input" rows="1" placeholder="Tulis pesan…"></textarea>
+        <textarea id="input" rows="1" placeholder="Tulis pesan… (ketik 'fresh' = mulai dari awal)"></textarea>
         <button id="send" title="Kirim" aria-label="Kirim">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12h13M12 5.5l6.5 6.5-6.5 6.5"/></svg>
         </button>
@@ -543,8 +548,8 @@ const btnFresh = $("#btn-fresh");
 function renderFresh(){
   if(!btnFresh) return;
   btnFresh.innerHTML = freshMode
-    ? IC.spark + '<span class="hide-sm">Fresh</span>'
-    : IC.brain + '<span class="hide-sm">Memori</span>';
+    ? IC.spark + '<span class="lbl">Fresh</span>'
+    : IC.brain + '<span class="lbl">Memori</span>';
   btnFresh.classList.toggle("on", freshMode);
   btnFresh.title = freshMode
     ? "Chat ini mulai dari nol (tanpa MEMORY.md & ringkasan). Klik buat pakai memori."
@@ -945,7 +950,7 @@ async function newChat(){
     setChatId(j.chat_id);
     freshMode = true; renderFresh();
     renderWelcome("Chat baru — mode fresh",
-      "Percakapan mulai dari nol (tanpa memori jangka panjang). Riwayat lama tetap tersimpan di sidebar.");
+      "Percakapan mulai dari nol: tanpa MEMORY.md dan tanpa ringkasan, sesuai ATURAN-PURU.md. Riwayat lama tetap tersimpan di sidebar.");
     closeSidebar();
     refreshInfo(); loadChats(); input.focus();
   }catch(e){ alert("Gagal: " + e.message); }
@@ -969,6 +974,13 @@ async function clearChat(){
 async function sendMsg(text){
   text = (text || "").trim();
   if((!text && !attachments.length) || busy) return;
+  // ATURAN-PURU.md: ketik "fresh" = percakapan baru seperti dari awal.
+  const low = text.toLowerCase();
+  if(!attachments.length && (low === "fresh" || low === "/fresh" || low === "/new")){
+    input.value = ""; autosize();
+    await newChat();
+    return;
+  }
   const payload = withAttachments(text);
   busy = true; send.disabled = true;
   const myGen = ++gen;

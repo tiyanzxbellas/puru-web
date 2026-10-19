@@ -467,9 +467,11 @@ Workspace root: %s
 - Agent definition: %s/AGENTS.md
 - Soul: %s/SOUL.md
 - User: %s/USER.md
+- Rules: %s/ATURAN-PURU.md (always-on behaviour; injected whenever the file exists)
 - Long-term memory: %s/memory/MEMORY.md
 - Conversation summaries: %s/memory/context/YYYY-MM-DD_HH-MM-SS.md (newest 20 kept, system-managed; never write there yourself)
 - Skills: %s/skills/{skill-name}/SKILL.md`,
+			workspacePath,
 			workspacePath,
 			workspacePath,
 			workspacePath,
