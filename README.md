@@ -223,6 +223,11 @@ Repo ini menyuntik **ATURAN-PURU.md** ke system prompt setiap request.
   `internal/workspace/defaults/ATURAN-PURU.md` (file yang sudah ada tidak pernah ditimpa).
 - **Mode fresh** — *Chat baru* / *Hapus riwayat* → run tanpa `memory/MEMORY.md` dan
   tanpa ringkasan konteks. Identitas (AGENTS/SOUL/USER) + katalog skill tetap aktif.
+- **Gaya balasan** — diatur di system prompt (`replyStyleRule`): jawab langsung ke inti
+  lalu **stop**, tanpa nawarin menu / "mau lanjut apa?" / sebut-sebut file internal
+  (MEMORY.md, folder project, skill). Sapaan pendek ("hai") dibalas pendek juga.
+  Di mode fresh lebih ketat: AI **mengaku tidak punya ingatan** percakapan sebelumnya —
+  kalau disuruh cari, hasilnya dinyatakan jelas berasal dari file di disk, bukan memori.
 - **Cukup tombol** — di web tidak perlu mengetik kata kunci apa pun (kata `fresh` biasa
   dikirim ke AI seperti pesan lain). Tombol **Chat baru** (➕) atau *Hapus riwayat* (🗑)
   langsung memulai percakapan dari nol — persis aturan di ATURAN-PURU.md pasal *Mode fresh*.

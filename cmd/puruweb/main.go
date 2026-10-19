@@ -103,7 +103,7 @@ func main() {
 // and WITHOUT the newest context summary: web "chat baru / hapus riwayat"
 // starts from zero (Mode fresh).
 func renderedSystemFresh(cfg *config.Config) string {
-	s, err := prompt.Get("", "", cfg.Workspace, cfg.SkillsPolicy())
+	s, err := prompt.GetFresh(cfg.Workspace, cfg.SkillsPolicy())
 	if err != nil {
 		return ""
 	}

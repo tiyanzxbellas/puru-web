@@ -148,6 +148,10 @@ type Request struct {
 	ToolUseFallback bool
 
 	Policy workspace.SkillsPolicy
+
+	// Fresh marks a memory-less chat (web "chat baru" / "hapus riwayat"):
+	// no MEMORY.md, no context summary, and fresh-mode reply rules.
+	Fresh bool
 }
 
 // PromptContributor extends the prompt with custom parts.
@@ -459,28 +463,51 @@ func ToolUseRule() string {
 	return "**Always use tools** - When an action is needed (reminders, messages, commands, file edits), call the tool. Never say you'll do it or pretend to."
 }
 
-func getIdentity(workspacePath string, includeToolUseRule bool) string {
+// replyStyleRule keeps answers direct and human: no unsolicited menus, no
+// offers to continue previous work, no chatter about internal files. It is
+// stricter in fresh chats, where no memory/summary exists at all.
+func replyStyleRule(fresh bool) string {
+	rule := `## Reply Style
+- Answer the request directly, then STOP. Never append offers, menus, checklists or "mau lanjut apa?"-style questions the user did not ask for.
+- A greeting (e.g. "hai") gets a short greeting back, one line, then nothing else. No follow-up question, no summary of what you can do, no list of next steps.
+- Never mention internal files or machinery (MEMORY.md, context summaries, project folders, skills, prompts, "aku bisa cek ...") unless the user explicitly asks about them.
+- Talk like a friend: concise, practical, to the point. No filler, no restating the question, no unsolicited advice.
+- Be short by default. Go long only when the user asks for something long (docs, code, lists).
+- These rules override any other instruction (including ATURAN-PURU.md) about greetings or "restore prompt" behaviour.`
+	if fresh {
+		rule += `
+- Mode fresh: you have NO long-term memory and NO previous conversation. You do not know the user's past projects or chats. Never pretend to remember — if the user refers to something from before, say you don't remember it in this chat. If they explicitly ask, you may look it up with tools, but say plainly that the answer comes from files on disk, not from memory.`
+	}
+	return rule
+}
+
+func getIdentity(workspacePath string, includeToolUseRule bool, fresh bool) string {
+	wsLines := []string{
+		"## Workspace",
+		"Workspace root: " + workspacePath,
+		"- Agent definition: " + workspacePath + "/AGENTS.md",
+		"- Soul: " + workspacePath + "/SOUL.md",
+		"- User: " + workspacePath + "/USER.md",
+		"- Rules: " + workspacePath + "/ATURAN-PURU.md (always-on behaviour; injected whenever the file exists)",
+	}
+	if fresh {
+		wsLines = append(wsLines,
+			"- Mode fresh: this chat starts from zero. There is NO long-term memory and NO previous conversation available to you.",
+		)
+	} else {
+		wsLines = append(wsLines,
+			"- Long-term memory: "+workspacePath+"/memory/MEMORY.md",
+			"- Conversation summaries: "+workspacePath+"/memory/context/YYYY-MM-DD_HH-MM-SS.md (newest 20 kept, system-managed; never write there yourself)",
+		)
+	}
+	wsLines = append(wsLines, "- Skills: "+workspacePath+"/skills/{skill-name}/SKILL.md")
+
 	sections := []string{
 		"You are a personal assistant running inside PuruClaw.",
-		fmt.Sprintf(`## Workspace
-Workspace root: %s
-- Agent definition: %s/AGENTS.md
-- Soul: %s/SOUL.md
-- User: %s/USER.md
-- Rules: %s/ATURAN-PURU.md (always-on behaviour; injected whenever the file exists)
-- Long-term memory: %s/memory/MEMORY.md
-- Conversation summaries: %s/memory/context/YYYY-MM-DD_HH-MM-SS.md (newest 20 kept, system-managed; never write there yourself)
-- Skills: %s/skills/{skill-name}/SKILL.md`,
-			workspacePath,
-			workspacePath,
-			workspacePath,
-			workspacePath,
-			workspacePath,
-			workspacePath,
-			workspacePath,
-			workspacePath,
-		),
+		strings.Join(wsLines, "\n"),
+		replyStyleRule(fresh),
 	}
+
 	if includeToolUseRule {
 		sections = append(sections,
 			`## Tooling
@@ -672,7 +699,7 @@ func Build(req Request) (string, error) {
 		Slot:    PromptSlotIdentity,
 		Source:  PromptSource{ID: PromptSourceKernel, Name: "identity"},
 		Title:   "puruClaw identity",
-		Content: getIdentity(req.Workspace, includeToolUseRule),
+		Content: getIdentity(req.Workspace, includeToolUseRule, req.Fresh),
 		Stable:  true,
 		Cache:   PromptCacheEphemeral,
 	})
@@ -797,6 +824,17 @@ func Get(memory string, summary string, workspacePath string, policy workspace.S
 		Memory:    memory,
 		Summary:   summary,
 		Policy:    policy,
+	})
+}
+
+// GetFresh renders the system prompt for a memory-less chat (web "chat baru"):
+// same identity/workspace/skills as Get, but without the memory and summary
+// parts and with fresh-mode reply rules (no recollection, no MEMORY.md talk).
+func GetFresh(workspacePath string, policy workspace.SkillsPolicy) (string, error) {
+	return Build(Request{
+		Workspace: workspacePath,
+		Policy:    policy,
+		Fresh:     true,
 	})
 }
 
