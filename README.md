@@ -279,6 +279,10 @@ kompres dulu, atau kirim sebagai link unduh (`downloads/` tetap sumbernya).
 **peringatan keamanan (web ini belum ada login)** — semua ada di
 [`WEB-HOSTING.md`](WEB-HOSTING.md).
 
+Buat panduan **langkah-demi-langkah di Termux** (jalanin di `http://127.0.0.1:18099`
++ deploy ke internet pakai **ngrok**, termasuk fix DNS `proot` yang wajib di
+Android), lihat [`TERMUX-DEPLOY.md`](TERMUX-DEPLOY.md).
+
 Cara cepat:
 
 ```bash

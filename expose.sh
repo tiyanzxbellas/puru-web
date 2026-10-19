@@ -52,7 +52,13 @@ case "$WHICH" in
     exec cloudflared tunnel --url "$TARGET" ;;
   ngrok)
     command -v ngrok >/dev/null 2>&1 || {
-      echo "❌ ngrok belum terpasang / belum ada authtoken. Lihat WEB-HOSTING.md §4a"; exit 1; }
+      echo "❌ ngrok belum terpasang / belum ada authtoken. Lihat TERMUX-DEPLOY.md §2b"; exit 1; }
+    # Di Termux/Android ngrok WAJIB lewat wrapper proot (fix DNS /etc/resolv.conf
+    # yang gak ada + CA Termux). Lihat TERMUX-DEPLOY.md §2d.
+    if [ -x ./ngrok-termux.sh ]; then
+      echo "▶ ngrok via ngrok-termux.sh (fix DNS + CA Termux)…"
+      exec ./ngrok-termux.sh http "$PORT"
+    fi
     echo "▶ ngrok… (URL muncul di bawah, Ctrl-C untuk stop)"
     exec ngrok http "$PORT" ;;
   lt)
