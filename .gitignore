@@ -31,3 +31,4 @@ tmp/
 # tunnel localtunnel (localtunnel nulis URL + log di sini)
 tunnel/lt.url
 tunnel/*.log
+tunnel/lt.pid

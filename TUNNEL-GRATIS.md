@@ -39,6 +39,17 @@ LT_PORT=3000 ./tunnel/on.sh
 
 > Server Puru Web-nya harus nyala dulu di terminal lain: `./run_web.sh`.
 
+**Nama pilihan gagal didapat?** Server localtunnel butuh beberapa detik buat
+melepas subdomain yang baru saja dipakai. Kalau `puru-ai` belum dapat, runner
+otomatis coba nama cadangan (`puruweb`, `puru`, ...). Mau tetap `puru-ai`?
+Tunggu ±15 detik lalu `LT_SUB=puru-ai ./tunnel/on.sh` lagi — caranya:
+
+```bash
+./tunnel/off.sh && sleep 15 && LT_SUB=puru-ai ./tunnel/on.sh
+```
+
+Lihat nama yang benar-benar didapat di `tunnel/lt.log` atau `./tunnel/status.sh`.
+
 ---
 
 ## 2. Isi folder `tunnel/`
@@ -50,7 +61,14 @@ LT_PORT=3000 ./tunnel/on.sh
 | `off.sh` | matiin proses tunnel |
 | `status.sh` | PID + URL + HTTP `/api/info` |
 | `lt-pid.sh` | cari PID node runner lewat `/proc/*/cmdline` (`pgrep -f` nggak andal di Termux) |
-| `lt.url` / `lt.log` | URL aktif + log (dibuat otomatis, jangan di-commit) |
+| `lt.url` / `lt.pid` | URL aktif + PID runner (ditulis otomatis, jangan di-commit) |
+| `lt.log` / `lt.run.log` | log runner + stdout/stderr |
+
+**Kenapa PID disimpan di `lt.pid`?** Biar `off.sh` tau mana proses yang harus
+dimatikan. Scan `/proc` bebas (`pgrep -f lt-start.cjs`) gampang **cocok ke shell
+pemanggilnya sendiri** — karena command line shell-nya memuat nama file itu —
+akibatnya shell-nya ikut dibunuh. `lt-pid.sh` sekarang pakai pidfile dulu, dan
+fallback scan `/proc` dengan mengecualikan PID sendiri + induknya.
 
 **Kenapa perlu runner `.cjs`?** CLI resmi `lt` langsung mati di Termux:
 
