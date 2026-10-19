@@ -273,6 +273,7 @@ func readJSON(r *http.Request, dst any) error {
 func userMsg(s string) []*messages.Message {
 	m := &messages.Message{Role: "user"}
 	messages.SetContentString(m, s)
+	messages.Stamp(m, time.Now())
 	return []*messages.Message{m}
 }
 
@@ -280,6 +281,7 @@ func userMsg(s string) []*messages.Message {
 func noteMsg(s string) []*messages.Message {
 	m := &messages.Message{Role: "assistant"}
 	messages.SetContentString(m, s)
+	messages.Stamp(m, time.Now())
 	return []*messages.Message{m}
 }
 
@@ -358,9 +360,13 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 type msgView struct {
-	Role    string     `json:"role"`
-	Content string     `json:"content"`
-	Files   []SentFile `json:"files,omitempty"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// Time is the wall-clock time the message was created (unix seconds), so
+	// the UI shows when it was really sent instead of the render time. 0 for
+	// history written before timestamps existed.
+	Time  int64      `json:"time,omitempty"`
+	Files []SentFile `json:"files,omitempty"`
 }
 
 // viewMessages renders the chat untuk UI dan menempelkan lagi file yang
@@ -391,9 +397,10 @@ func buildViews(stored []*messages.Message) []msgView {
 		// biar tidak tampil sebagai balasan pendek-pendek.
 		if n := len(out); n > 0 && out[n-1].Role == "assistant" && m.Role == "assistant" {
 			out[n-1].Content = txt
+			out[n-1].Time = m.Time()
 			continue
 		}
-		out = append(out, msgView{Role: m.Role, Content: txt})
+		out = append(out, msgView{Role: m.Role, Content: txt, Time: m.Time()})
 	}
 	return out
 }
@@ -519,9 +526,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	stored := s.hist.Get(chatID)
 	filesBefore := len(s.sentFiles(chatID))
 
+	// Pesan user dibuat SEKALI dan dipakai lagi di akhir run. Dulu dibuat dua
+	// kali, sehingga jam kirim yang tersimpan bisa jadi jam jawaban selesai
+	// (kalau run-nya lama) — sekarang jamnya tetap jam user menekan kirim.
+	um := userMsg(text)
+	withUser := func(base []*messages.Message) []*messages.Message {
+		return append(append([]*messages.Message{}, base...), um...)
+	}
+
 	// Simpan pertanyaan user SEKARANG (sebelum run jalan): kalau tab di-reload
 	// atau server restart di tengah proses, pertanyaannya tidak hilang.
-	_ = s.hist.Set(chatID, append(append([]*messages.Message{}, stored...), userMsg(text)...))
+	_ = s.hist.Set(chatID, withUser(stored))
 
 	// Compaction pakai ukuran RIWAYAT saja (bukan system+riwayat). Dulu
 	// system+riwayat dipakai, dan karena MEMORY.md bisa lebih besar dari
@@ -574,8 +589,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(cerr, context.DeadlineExceeded) {
 			note = timeoutNote
 		}
-		saved := append(append([]*messages.Message{}, stored...), userMsg(text)...)
-		saved = append(saved, noteMsg(note)...)
+		saved := append(withUser(stored), noteMsg(note)...)
 		_ = s.hist.Set(chatID, saved)
 		log.Printf("webui chat %d: run dihentikan (%v) setelah %s", chatID, cerr, time.Since(start).Round(time.Millisecond))
 		writeJSON(w, http.StatusOK, chatResp{
@@ -591,8 +605,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// persist (same shape as the CLI path)
-	saved := append(append([]*messages.Message{}, stored...), userMsg(text)...)
-	saved = append(saved, messages.SanitizeHistoryMessages(res.ResponseMessages)...)
+	respMsgs := messages.SanitizeHistoryMessages(res.ResponseMessages)
+	done := time.Now()
+	for _, rm := range respMsgs {
+		if rm.Time() == 0 {
+			messages.Stamp(rm, done)
+		}
+	}
+	saved := append(withUser(stored), respMsgs...)
 	_ = s.hist.Set(chatID, saved)
 
 	writeJSON(w, http.StatusOK, chatResp{

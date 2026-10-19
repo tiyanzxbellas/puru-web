@@ -255,6 +255,13 @@ main{flex:1;overflow-y:auto;padding:24px 14px 10px;scroll-behavior:smooth;oversc
 .msg .body.show-actions .bubble-actions{display:flex;animation:enter .2s var(--ease)}
 .bubble-actions .stamp{font-size:10.5px;color:var(--muted);letter-spacing:.3px}
 .msg.user .bubble-actions{justify-content:flex-end}
+/* jam kirim: selalu tampil kecil di bawah bubble (bukan jam render) */
+.tstamp{
+  display:block;margin-top:7px;font-size:10.5px;line-height:1;letter-spacing:.3px;
+  color:var(--muted);opacity:.72;font-variant-numeric:tabular-nums;
+}
+.msg.user .tstamp{text-align:right}
+.tstamp[hidden]{display:none}
 .act-btn{
   background:rgba(255,255,255,.045);color:var(--muted);border:1px solid var(--line-2);
   border-radius:8px;padding:4px 10px;font-size:11.5px;cursor:pointer;
@@ -588,7 +595,28 @@ function setChatId(id){
   if(id){ chatId = Number(id); try{ localStorage.setItem("puru_chat_id", String(id)); }catch(e){} }
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
-function timeStamp(){ const d = new Date(); return String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0"); }
+const BULAN = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+function pad2(n){ return String(n).padStart(2,"0"); }
+/* ts = unix detik dari server (jam pesan dibuat). Kosong = riwayat lama tanpa
+   jam, jadi tidak ditampilkan daripada menampilkan jam sekarang (menyesatkan). */
+function timeStamp(ts){
+  const d = new Date(Number(ts) * 1000);
+  if(!ts || isNaN(d.getTime())) return "";
+  const now = new Date();
+  const hm = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if(sameDay) return hm;
+  const y = new Date(now.getTime() - 86400000);
+  if(d.getFullYear() === y.getFullYear() && d.getMonth() === y.getMonth() && d.getDate() === y.getDate()) return "Kemarin " + hm;
+  const tgl = d.getDate() + " " + BULAN[d.getMonth()];
+  if(d.getFullYear() !== now.getFullYear()) return tgl + " " + d.getFullYear() + " " + hm;
+  return tgl + " " + hm;
+}
+function fullStamp(ts){
+  const d = new Date(Number(ts) * 1000);
+  if(!ts || isNaN(d.getTime())) return "";
+  return d.getDate() + " " + BULAN[d.getMonth()] + " " + d.getFullYear() + ", " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+}
 function syncStatus(){
   const running = busy || polling || !!$("#typing");
   topbar.classList.toggle("on", running);
@@ -767,7 +795,7 @@ function scrollDown(force){
   requestAnimationFrame(()=>{ main.scrollTop = main.scrollHeight; });
 }
 
-function addMsg(role, text, animate){
+function addMsg(role, text, animate, ts){
   hideWelcome();
   const el = document.createElement("div");
   el.className = "msg " + role + (animate ? " anim" : "");
@@ -777,7 +805,8 @@ function addMsg(role, text, animate){
   el.innerHTML = `<div class="who">${who}</div>
     <div class="body">
       <div class="content"></div>
-      <div class="bubble-actions"><span class="stamp">${timeStamp()}</span><button class="act-btn" data-copy-msg="1">${IC.copy}<span>Salin</span></button>${role === "user" ? `<button class="act-btn" data-edit-msg="1">${IC.edit}<span>Edit</span></button><button class="act-btn" data-resend-msg="1">${IC.resend}<span>Kirim ulang</span></button>` : ""}</div>
+      <div class="tstamp" hidden></div>
+      <div class="bubble-actions"><button class="act-btn" data-copy-msg="1">${IC.copy}<span>Salin</span></button>${role === "user" ? `<button class="act-btn" data-edit-msg="1">${IC.edit}<span>Edit</span></button><button class="act-btn" data-resend-msg="1">${IC.resend}<span>Kirim ulang</span></button>` : ""}</div>
     </div>`;
   const body = el.querySelector(".body");
   const cont = el.querySelector(".content");
@@ -788,6 +817,13 @@ function addMsg(role, text, animate){
   }else{
     cont.innerHTML = md(text);
     bindCopies(body);
+  }
+  const tsEl = el.querySelector(".tstamp");
+  const tsTxt = timeStamp(ts);
+  if(tsEl && tsTxt){
+    tsEl.textContent = tsTxt;
+    tsEl.title = fullStamp(ts);
+    tsEl.hidden = false;
   }
   wrap.appendChild(el);
   scrollDown(true);
@@ -889,7 +925,7 @@ function renderAll(msgs){
     return;
   }
   msgs.forEach((m, i)=>{
-    const el = addMsg(m.role, m.content, i === msgs.length - 1);
+    const el = addMsg(m.role, m.content, i === msgs.length - 1, m.time);
     if(m.files && m.files.length) addFiles(el, m.files);
   });
 }
@@ -1135,7 +1171,7 @@ async function sendMsg(text){
   const payload = withAttachments(text);
   busy = true; send.disabled = true;
   const myGen = ++gen;
-  addMsg("user", payload, true);
+  addMsg("user", payload, true, Math.floor(Date.now()/1000));
   input.value = ""; autosize();
   addTyping();
   syncStatus();
@@ -1145,13 +1181,13 @@ async function sendMsg(text){
     delTyping();
     setChatId(j.chat_id);
     if(j.canceled){
-      const note = addMsg("assistant", j.reply || "⏹ Dihentikan.", true);
+      const note = addMsg("assistant", j.reply || "⏹ Dihentikan.", true, Math.floor(Date.now()/1000));
       note.classList.add("canceled");
       attachments = []; renderAttach();
       refreshInfo(); loadChats();
       return;
     }
-    const el = addMsg("assistant", "", true);
+    const el = addMsg("assistant", "", true, Math.floor(Date.now()/1000));
     await revealAnswer(el, j.reply || "(kosong)");
     if(myGen !== gen) return;
     addFiles(el, j.files);
@@ -1160,7 +1196,7 @@ async function sendMsg(text){
   }catch(e){
     if(myGen !== gen) return;
     delTyping();
-    const el = addMsg("assistant", "", true);
+    const el = addMsg("assistant", "", true, Math.floor(Date.now()/1000));
     await revealAnswer(el, e.status === 409
       ? "Permintaan sebelumnya masih diproses. Tunggu sebentar, lalu kirim ulang."
       : "Terjadi kesalahan: " + e.message);

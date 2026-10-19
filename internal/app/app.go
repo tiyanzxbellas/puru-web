@@ -441,6 +441,8 @@ func uniqueUploadName(workspace, name string) string {
 func (a *App) processMessage(ctx context.Context, msg *telegram.Message, userMessage string) error {
 	userID := msg.From.ID
 	stored := a.hist.Get(userID)
+	// jam pesan = saat user mengirim, bukan saat jawaban selesai
+	sentAt := time.Now()
 
 	if msg.Attachment != nil && a.tg != nil && a.cfg != nil {
 		ws := a.cfg.Workspace
@@ -494,11 +496,19 @@ func (a *App) processMessage(ctx context.Context, msg *telegram.Message, userMes
 	saved = append(saved, stored...)
 	u := &messages.Message{Role: "user"}
 	messages.SetContentString(u, userMessage)
+	messages.Stamp(u, sentAt)
 	saved = append(saved, u)
 	// Keep as-is (reasoning + empty responses preserved);
 	// only size-truncated via Sanitize. No prune — compaction handles
 	// it at history_token_limit.
-	saved = append(saved, messages.SanitizeHistoryMessages(res.ResponseMessages)...)
+	respMsgs := messages.SanitizeHistoryMessages(res.ResponseMessages)
+	done := time.Now()
+	for _, rm := range respMsgs {
+		if rm.Time() == 0 {
+			messages.Stamp(rm, done)
+		}
+	}
+	saved = append(saved, respMsgs...)
 	_ = a.hist.Set(userID, saved)
 
 	if err := a.safeSend(ctx, msg, res.Text); err != nil {

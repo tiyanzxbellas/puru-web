@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // MaxStoredContent caps TOOL payloads (tool-call args, tool results) so big
@@ -181,6 +182,34 @@ func (m *Message) SetExtra(key string, v any) {
 // ContentNull reports whether content is absent or null.
 func ContentNull(m *Message) bool {
 	return m == nil || len(m.Content) == 0 || bytes.Equal(m.Content, json.RawMessage("null"))
+}
+
+// Stamp records when the message was created (unix seconds). It is stored as
+// an extra top-level JSON field, so it survives the history round-trip and is
+// never sent to the model (only Text() goes to the provider).
+func Stamp(m *Message, t time.Time) {
+	if m == nil || t.IsZero() {
+		return
+	}
+	m.SetExtra("time", t.Unix())
+}
+
+// Time returns the stored creation time (unix seconds), or 0 when the message
+// was written before timestamps existed.
+func (m *Message) Time() int64 {
+	raw := m.Extra("time")
+	if len(raw) == 0 {
+		return 0
+	}
+	var n int64
+	if json.Unmarshal(raw, &n) == nil {
+		return n
+	}
+	var f float64
+	if json.Unmarshal(raw, &f) == nil {
+		return int64(f)
+	}
+	return 0
 }
 
 // ContentString returns the content when it is a plain string.

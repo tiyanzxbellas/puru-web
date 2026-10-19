@@ -397,6 +397,25 @@ Cara kerja **Hentikan** (backend `POST /api/cancel`):
 - UI menunggu `/api/info` sampai `running:false` (maks ~12 detik) sebelum render ulang,
   jadi nggak ada balapan antara tombol Hentikan dan pesan baru.
 
+### 🕒 Jam pesan (jam kirim asli, bukan jam render)
+
+Setiap pesan sekarang membawa jam pembuatannya sendiri, jadi jam di bawah bubble
+**tidak berubah** walau halaman di-reload besok atau server di-restart.
+
+- **Disimpan di riwayat**: field `time` (unix detik) di tiap pesan pada
+  `~/.puru/history/<chatID>.json`. Pesan user di-stamp **saat kamu menekan kirim**,
+  pesan assistant saat jawabannya **selesai** (dulu pesan user dibuat ulang di akhir
+  run, jadi run yang lama bikin jamnya geser ke jam selesai).
+- **Ikut di API**: `GET /api/messages` mengirim `time` per pesan → UI menampilkannya
+  di baris kecil bawah bubble (selalu kelihatan, tidak perlu ketuk bubble lagi).
+- **Format** mengikuti tanggal: hari ini `19:05` · kemarin `Kemarin 19:05` ·
+  tanggal lain `18 Okt 19:05` · tahun lain `18 Okt 2025 19:05`.
+  Arahkan kursor ke jamnya untuk lihat tanggal + jam lengkap.
+- **Riwayat lama** (ditulis sebelum fitur ini ada) tidak punya `time`, jadi jamnya
+  dikosongkan — lebih baik tidak tampil daripada menampilkan jam sekarang.
+- Jalur Telegram/CLI juga di-stamp (`internal/app/app.go`), jadi riwayat di sana
+  konsisten kalau nanti dibaca dari web.
+
 ### 🌍 Biar bisa dibuka orang lain / dari internet
 
 `127.0.0.1:18099` cuma bisa dibuka dari HP sendiri. Buat LAN, tunnel
