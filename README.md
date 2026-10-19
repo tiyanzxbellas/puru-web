@@ -283,12 +283,22 @@ Buat panduan **langkah-demi-langkah di Termux** (jalanin di `http://127.0.0.1:18
 + deploy ke internet pakai **ngrok**, termasuk fix DNS `proot` yang wajib di
 Android), lihat [`TERMUX-DEPLOY.md`](TERMUX-DEPLOY.md).
 
+Buat **tunnel gratis tanpa akun & tanpa token, nama bisa dipilih sendiri**
+(`https://puru-ai.loca.lt`), lihat [`TUNNEL-GRATIS.md`](TUNNEL-GRATIS.md) dan
+folder [`tunnel/`](tunnel/) `./tunnel/on.sh`.
+
 Cara cepat:
 
 ```bash
+# opsi A - cloudflared (gratis, tanpa akun, URL acak)
 pkg install -y cloudflared
 ./run_web.sh                        # terminal 1
 ./expose.sh cloudflared             # terminal 2 -> https://xxxx.trycloudflare.com
+
+# opsi B - localtunnel (gratis, tanpa akun, NAMA PILIH SENDIRI)
+npm i -g localtunnel                # sekali saja
+./run_web.sh                        # terminal 1
+./tunnel/on.sh                      # terminal 2 -> https://puru-ai.loca.lt
 ```
 
 > `puruweb` belum punya autentikasi. Siapa pun yang dapat URL-nya bisa

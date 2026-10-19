@@ -18,7 +18,7 @@ dibuka dari HP/browser lain atau dari internet?**
 | 3 | Tunnel **cloudflared** (quick) | `pkg install cloudflared` | ✅ | ✅ | gratis, **tanpa akun**, URL random |
 | 4 | Tunnel **ngrok** | akun ngrok + authtoken | ✅ | ✅ | gratis (1 agent), URL random |
 | 5 | Tunnel **SSH** (localhost.run / serveo) | `ssh` (udah ada) | ✅ | ✅ | **nol install**, nol akun |
-| 6 | **localtunnel** (`lt`) | `npm i -g localtunnel` | ✅ | ✅ | nol akun |
+| 6 | **localtunnel** (`lt`) | `npm i -g localtunnel` | ✅ | ✅ | nol akun, **nama bisa dipilih** (`puru-ai.loca.lt`) — dipakai sekarang |
 | 7 | **VPS** + reverse proxy | VPS + domain | ✅ | ✅ | 24/7, HP boleh mati |
 | 8 | **Docker** (VPS / HF Space) | Docker | ✅ | ✅ | sama seperti #7 |
 | 9 | **Vercel** | — | — | — | ❌ **NGGAK BISA** → lihat §7 |
@@ -130,6 +130,12 @@ Output-nya nampilin URL random seperti:
 
 ## 4. Tunnel lain
 
+> **Butuh akun/token?** — cloudflared quick: ❌ &nbsp;·&nbsp; SSH localhost.run: ❌
+> &nbsp;·&nbsp; localtunnel: ❌ (nol akun, **nama bisa dipilih**) &nbsp;·&nbsp;
+> **ngrok: ✅ wajib authtoken** (gratis, cara ambilnya di
+> [`TERMUX-DEPLOY.md`](TERMUX-DEPLOY.md) §2a) &nbsp;·&nbsp; serveo: opsional
+> daftar SSH key di console.serveo.net.
+
 ### 4a. ngrok
 
 `ngrok` **tidak ada** di repo Termux dan **tidak terpasang** di HP ini.
@@ -165,16 +171,58 @@ ssh -o StrictHostKeyChecking=no -R 80:localhost:18099 serveo.net
 URL-nya muncul di output SSH (mis. `https://xxxx.loca.lt`). Kelebihan:
 nggak perlu install apa pun. Kekurangan: kadang lambat / sering putus.
 
-### 4c. localtunnel (`lt`)
+### 4c. localtunnel — gratis, tanpa akun, **nama bisa dipilih** ⭐
+
+Ini yang dipakai sekarang: **`https://puru-ai.loca.lt`**. Nol akun, nol token,
+nol install binary, dan subdomain-nya kita tentukan sendiri (selama belum
+dipakai orang lain saat kita nyala).
 
 ```bash
 npm i -g localtunnel
-lt --port 18099
-# -> https://xxxx.loca.lt
+lt --port 18099 --subdomain puru-ai      # -> https://puru-ai.loca.lt
 ```
 
-`lt` kadang minta "tunnel password" (biasanya = IP publik HP mas); kalau
-diminta, muncul di halaman itu sendiri.
+> ⚠️ **Di Termux CLI `lt` crash** — `Unsupported platform: android` (modul
+> `openurl` dipanggil saat start). Makanya di repo ini ada runner yang
+> manggil modulnya langsung: folder [`tunnel/`](tunnel/).
+
+```bash
+./tunnel/on.sh                   # nyalain (auto fallback nama) + cek HTTP publik
+./tunnel/status.sh               # PID + URL + HTTP code
+./tunnel/off.sh                  # matiin
+LT_SUB=puruweb ./tunnel/on.sh    # coba nama lain
+```
+
+Isi `tunnel/`: `lt-start.cjs` (runner), `on.sh`, `off.sh`, `status.sh`,
+`lt-pid.sh` (cari PID via `/proc/*/cmdline`, karena `pgrep -f` nggak andal di
+Termux). URL aktif disimpan di `tunnel/lt.url`, log di `tunnel/lt.log`.
+Daftar nama cadangan dari env `LT_SUB` (default `puru-ai,puruweb,puru,puruai`).
+
+#### Halaman peringatan localtunnel (baca ini dulu)
+
+Pengunjung yang pakai **browser** kena satu halaman dulu:
+
+> "Tunnel website ahead! ... To continue, enter the IP shown above."
+
+Caranya: **ketik IP publik HP yang ditampilkan di halaman itu** (cek dengan
+`curl -s https://api.ipify.org`) → **Continue** → langsung masuk UI Puru.
+
+- Muncul **sekali per IP pengunjung per 7 hari** (bukan tiap kali buka).
+- Request **non-browser** (curl / API / webhook) **tembus langsung** —
+  localtunnel cuma nampilin halaman kalau User-Agent-nya browser sungguhan.
+- Program juga bisa nembus pakai header `bypass-tunnel-reminder: <apa saja>`
+  (pernyataan resmi localtunnel).
+- Kalau muncul permintaan "tunnel password", isinya = **IP publik kita sendiri**
+  (angka yang sama seperti di atas).
+
+#### Batasan
+
+- Subdomain bisa "diambil" orang lain saat tunnel kita mati → `LT_SUB` punya
+  daftar cadangan dan otomatis dicoba satu per satu.
+- Tunnel mati kalau prosesnya berhenti (`Ctrl-C` / `./tunnel/off.sh`), dan
+  **tidak** nyala sendiri setelah HP reboot → autostart lewat
+  `~/.termux/boot/` (butuh app **Termux:Boot**), contohnya ada di
+  [`TUNNEL-GRATIS.md`](TUNNEL-GRATIS.md).
 
 ---
 
@@ -350,6 +398,16 @@ PORT=18099 ./expose.sh cloudflared
 Script-nya ngecek server lokal hidup dulu, baru nyalain tunnel, dan
 nampilin peringatan "no login" sebelum URL dibagi.
 
+Tunnel localtunnel **nama tetap** (yang dipakai sekarang) punya helper sendiri:
+
+```bash
+./tunnel/on.sh        # -> https://puru-ai.loca.lt
+./tunnel/status.sh
+./tunnel/off.sh
+```
+
+`./expose.sh lt` sekarang juga otomatis pakai `tunnel/on.sh` kalau ada.
+
 ---
 
 ## 9. Troubleshooting
@@ -366,4 +424,4 @@ nampilin peringatan "no login" sebelum URL dibagi.
 
 ---
 
-*Terakhir diupdate: 2026-10-19 — PuruClaw 🦞*
+*Terakhir diupdate: 2026-10-19 (localtunnel `puru-ai.loca.lt` + folder `tunnel/`) — PuruClaw 🦞*

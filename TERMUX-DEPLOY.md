@@ -241,6 +241,8 @@ ngrok/proot:
 ./expose.sh ssh        # SSH tunnel localhost.run — nol install, nol akun
 # atau
 pkg install -y cloudflared && ./expose.sh cloudflared
+# atau — localtunnel, gratis + nama bisa dipilih (dipakai sekarang)
+npm i -g localtunnel && ./tunnel/on.sh      # -> https://puru-ai.loca.lt
 ```
 
 Detail semua opsi (LAN, VPS, Docker, kenapa Vercel **tidak bisa**) ada di

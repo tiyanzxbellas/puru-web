@@ -28,3 +28,6 @@ tmp/
 # backup lokal patch
 *.bak
 *.bak-*
+# tunnel localtunnel (localtunnel nulis URL + log di sini)
+tunnel/lt.url
+tunnel/*.log

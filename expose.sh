@@ -1,6 +1,7 @@
 #!/bin/sh
 # expose.sh — bikin Puru Web (default 127.0.0.1:18099) bisa dibuka dari internet.
 # Pilih: ./expose.sh [auto|cloudflared|ngrok|ssh|lt]
+# localtunnel (lt) -> pakai ./tunnel/on.sh kalau ada (nama tetap, mis. puru-ai.loca.lt)
 set -e
 cd "$(dirname "$0")"
 
@@ -62,10 +63,15 @@ case "$WHICH" in
     echo "▶ ngrok… (URL muncul di bawah, Ctrl-C untuk stop)"
     exec ngrok http "$PORT" ;;
   lt)
+    # Runner repo (nama bisa dipilih + anti-crash CLI di Android).
+    if [ -x ./tunnel/on.sh ]; then
+      echo "▶ localtunnel via tunnel/on.sh (nama: ${LT_SUB:-puru-ai}) …"
+      exec ./tunnel/on.sh
+    fi
     command -v lt >/dev/null 2>&1 || {
       echo "❌ localtunnel belum terpasang. Install:  npm i -g localtunnel"; exit 1; }
-    echo "▶ localtunnel… (Ctrl-C untuk stop)"
-    exec lt --port "$PORT" ;;
+    echo "▶ localtunnel… (Ctrl+C untuk stop)"
+    exec lt --port "$PORT" --subdomain "${LT_SUB:-puru-ai}" ;;
   ssh)
     echo "▶ SSH tunnel via localhost.run… (URL muncul di bawah, Ctrl-C untuk stop)"
     exec ssh -o StrictHostKeyChecking=no -R "80:localhost:${PORT}" nokey@localhost.run ;;
