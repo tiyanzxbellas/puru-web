@@ -391,6 +391,18 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
 #send:not(:disabled):hover{filter:brightness(1.08)}
 #send:not(:disabled):active{transform:scale(.94)}
 .composer.busy #send{background:var(--surface-3);color:var(--muted);box-shadow:none}
+#stop{
+  display:none;align-items:center;justify-content:center;flex:0 0 38px;
+  width:38px;height:38px;border-radius:12px;cursor:pointer;
+  background:rgba(242,112,122,.14);color:var(--danger);border:1px solid rgba(242,112,122,.45);
+  transition:all .16s var(--ease);
+}
+#stop.on{display:flex;animation:enter .2s var(--ease)}
+#stop:hover{background:rgba(242,112,122,.26)}
+#stop:active{transform:scale(.94)}
+/* bubble dibatalkan */
+.msg.canceled .body{background:transparent;border:1px dashed var(--line-2);box-shadow:none}
+.msg.canceled .content{color:var(--muted);font-size:13.5px}
 .hint{max-width:840px;margin:8px auto 0;font-size:11px;color:var(--muted);text-align:center;letter-spacing:.2px}
 
 /* ================= mobile ================= */
@@ -485,6 +497,9 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.4 3.4 0 014.8 4.8l-8.6 8.6a1.8 1.8 0 01-2.5-2.5l7.9-7.9"/></svg>
         </button>
         <textarea id="input" rows="1" placeholder="Tulis pesan…"></textarea>
+        <button id="stop" title="Hentikan proses" aria-label="Hentikan proses" hidden>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+        </button>
         <button id="send" title="Kirim" aria-label="Kirim">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12h13M12 5.5l6.5 6.5-6.5 6.5"/></svg>
         </button>
@@ -557,7 +572,9 @@ const IC = {
   brain:'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4a3 3 0 00-3 3 3 3 0 00-2 5.2A3 3 0 006 17.5 3 3 0 009 20a3 3 0 003-3V7a3 3 0 00-3-3z"/><path d="M15 4a3 3 0 013 3 3 3 0 012 5.2A3 3 0 0118 17.5 3 3 0 0115 20a3 3 0 01-3-3"/></svg>',
   chat:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 01-11.5 7.2L4 21l1.8-5.5A8 8 0 1121 12z"/></svg>',
   code:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 8l-4 4 4 4M15 8l4 4-4 4"/></svg>',
-  send:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 8 6 8z"/></svg>'
+  send:'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l16-8-6 8 6 8z"/></svg>',
+  edit:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10-10a2.8 2.8 0 00-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>',
+  resend:'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 10-2.6 6.3"/><path d="M20 4v7h-7"/></svg>'
 };
 function fileIcon(name){
   if(isAudio(name)) return IC.music;
@@ -580,6 +597,8 @@ function syncStatus(){
   const cs = $("#chat-status");
   if(cs) cs.textContent = running ? "memproses" : "siap";
   sbFoot.classList.toggle("busy", running);
+  const stopBtn = $("#stop");
+  if(stopBtn) stopBtn.classList.toggle("on", running);
 }
 
 /* mode memori/fresh tidak ditampilkan di UI: chat baru & hapus riwayat
@@ -713,6 +732,26 @@ wrap.addEventListener("click", async (e)=>{
     setTimeout(()=>{ cbtn.classList.remove("done"); cbtn.innerHTML = old; }, 1600);
     return;
   }
+  const ebtn = e.target.closest("[data-edit-msg]");
+  if(ebtn){
+    const body = ebtn.closest(".body");
+    const raw = (body && body.dataset.raw) || "";
+    input.value = raw;
+    autosize();
+    input.focus();
+    try{ input.setSelectionRange(raw.length, raw.length); }catch(err){}
+    document.querySelectorAll(".body.show-actions").forEach(b=>b.classList.remove("show-actions"));
+    if(body) body.classList.add("show-actions");
+    return;
+  }
+  const rbtn = e.target.closest("[data-resend-msg]");
+  if(rbtn){
+    const body = rbtn.closest(".body");
+    const raw = (body && body.dataset.raw) || "";
+    document.querySelectorAll(".body.show-actions").forEach(b=>b.classList.remove("show-actions"));
+    if(raw.trim()) sendMsg(raw);
+    return;
+  }
   if(e.target.closest("a,button,pre,.codeblock")) return;
   const body = e.target.closest(".body");
   if(!body) return;
@@ -738,7 +777,7 @@ function addMsg(role, text, animate){
   el.innerHTML = `<div class="who">${who}</div>
     <div class="body">
       <div class="content"></div>
-      <div class="bubble-actions"><span class="stamp">${timeStamp()}</span><button class="act-btn" data-copy-msg="1">${IC.copy}<span>Salin</span></button></div>
+      <div class="bubble-actions"><span class="stamp">${timeStamp()}</span><button class="act-btn" data-copy-msg="1">${IC.copy}<span>Salin</span></button>${role === "user" ? `<button class="act-btn" data-edit-msg="1">${IC.edit}<span>Edit</span></button><button class="act-btn" data-resend-msg="1">${IC.resend}<span>Kirim ulang</span></button>` : ""}</div>
     </div>`;
   const body = el.querySelector(".body");
   const cont = el.querySelector(".content");
@@ -1105,6 +1144,13 @@ async function sendMsg(text){
     if(myGen !== gen) return;
     delTyping();
     setChatId(j.chat_id);
+    if(j.canceled){
+      const note = addMsg("assistant", j.reply || "⏹ Dihentikan.", true);
+      note.classList.add("canceled");
+      attachments = []; renderAttach();
+      refreshInfo(); loadChats();
+      return;
+    }
     const el = addMsg("assistant", "", true);
     await revealAnswer(el, j.reply || "(kosong)");
     if(myGen !== gen) return;
@@ -1121,6 +1167,31 @@ async function sendMsg(text){
   }finally{
     if(myGen === gen){ busy = false; send.disabled = false; syncStatus(); input.focus(); }
   }
+}
+
+/* ---------------- hentikan proses yang sedang jalan ---------------- */
+async function stopProcess(){
+  if(!(busy || polling || $("#typing"))) return;
+  const btn = $("#stop");
+  if(btn) btn.disabled = true;
+  try{
+    await api("/api/cancel", {method:"POST", body:JSON.stringify({chat_id:chatId})});
+  }catch(e){}
+  // tunggu server benar-benar berhenti (maks ~12 detik) sebelum render ulang,
+  // biar pesan berikutnya tidak ditolak 409 "masih memproses".
+  for(let i=0;i<48;i++){
+    await sleep(250);
+    try{
+      const inf = await api("/api/info"+(chatId?("?chat_id="+chatId):""));
+      if(!inf.running) break;
+    }catch(e){}
+  }
+  gen++; polling = false; busy = false; send.disabled = false;
+  delTyping(); syncStatus();
+  try{ await loadHistory(); }catch(e){}
+  refreshInfo(); loadChats();
+  if(btn) btn.disabled = false;
+  input.focus();
 }
 
 /* ---------------- file: kirim ke Puru & ambil dari Puru ---------------- */
@@ -1307,6 +1378,8 @@ function autosize(){
 }
 input.addEventListener("input", autosize);
 send.addEventListener("click", ()=> sendMsg(input.value));
+const stopBtnEl = $("#stop");
+if(stopBtnEl) stopBtnEl.addEventListener("click", ()=> stopProcess());
 
 /* ---------------- tombol ---------------- */
 $("#btn-new").addEventListener("click", newChat);

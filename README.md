@@ -373,6 +373,30 @@ bawah `contextWindow` model. Untuk model dengan `contextWindow` 200000 dan
 188000 < 200000). Kalau kelewat, provider bisa menolak request karena konteks
 penuh.
 
+### ⏹ Hentikan proses, ✏️ edit & kirim ulang
+
+Tiga tombol yang bikin web ini terasa kayak chat biasa:
+
+| Tombol | Kapan muncul | Fungsi |
+|---|---|---|
+| **⏹ Hentikan** (kotak merah di composer) | otomatis saat AI memproses | menghentikan run yang sedang jalan — termasuk **membunuh perintah shell** yang lagi dieksekusi |
+| **✏️ Edit** (di bubble pesan kamu) | ketuk bubble sendiri | isi pesan lama masuk lagi ke kolom chat, tinggal ubah lalu kirim |
+| **↻ Kirim ulang** (di bubble pesan kamu) | ketuk bubble sendiri | kirim ulang pesan itu persis seperti aslinya (tanpa ngetik lagi) |
+
+Cara kerja **Hentikan** (backend `POST /api/cancel`):
+
+- Tiap run punya `context.WithCancel` yang disimpan per chat slot (`Server.cancels`).
+  `/api/cancel` memanggil `cancel()` → panggilan model dibatalkan, dan
+  `run_shell_command` yang sedang jalan diterminasi (`exec.go` mendengarkan `ctx.Done()`).
+- Jawaban setengah jadi **tidak** disimpan. Yang masuk riwayat: pesan kamu +
+  catatan `⏹ Dihentikan sebelum selesai.` (kalau kena batas waktu:
+  `⏱ Waktu proses habis, jadi dihentikan otomatis.`).
+- Jadi **percakapan yang dibatalkan tetap kelihatan** di web dan di sidebar —
+  dulu run yang dihentikan bikin bubble hilang / jawaban menggantung.
+- Setelah berhenti, slot langsung bebas: pesan berikutnya tidak kena `409 still_running`.
+- UI menunggu `/api/info` sampai `running:false` (maks ~12 detik) sebelum render ulang,
+  jadi nggak ada balapan antara tombol Hentikan dan pesan baru.
+
 ### 🌍 Biar bisa dibuka orang lain / dari internet
 
 `127.0.0.1:18099` cuma bisa dibuka dari HP sendiri. Buat LAN, tunnel

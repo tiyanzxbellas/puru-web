@@ -12,6 +12,7 @@
 //	GET    /api/chats        → list chat slots
 //	POST   /api/upload       -> upload a file for the agent (multipart field file)
 //	POST   /api/delete_chats -> delete one or many web chats (bulk history delete)
+//	POST   /api/cancel       -> stop the run that is currently in progress
 //	GET    /api/files        -> list files under the workspace downloads/ folder
 //	GET    /api/file?path=   -> download one of those files (downloads/ only)
 //
@@ -67,6 +68,13 @@ const maxUploadBytes = 49 << 20
 // (scrape/sniff) can run for a long time.
 var maxRun = 60 * time.Minute
 
+// cancelNote / timeoutNote disimpan ke riwayat saat run dihentikan, biar
+// percakapan yang dibatalkan tetap kelihatan (tidak menggantung tanpa jawaban).
+const (
+	cancelNote  = "⏹ Dihentikan sebelum selesai."
+	timeoutNote = "⏱ Waktu proses habis, jadi dihentikan otomatis."
+)
+
 // Server wires the agent + stores into an HTTP handler.
 type Server struct {
 	agent  *ai.Agent
@@ -85,6 +93,9 @@ type Server struct {
 
 	freshMu sync.Mutex
 	fresh   map[int64]bool // chatID → run without long-term memory
+
+	cancelsMu sync.Mutex
+	cancels   map[int64]context.CancelFunc // chatID → cancel run yang sedang jalan
 }
 
 // New builds the web server. system is the rendered system prompt (used
@@ -96,14 +107,15 @@ func New(agent *ai.Agent, hist *history.Store, mem *memory.Manager, cfg *config.
 		}
 	}
 	s := &Server{
-		agent:  agent,
-		hist:   hist,
-		mem:    mem,
-		cfg:    cfg,
-		system: system,
-		busy:   map[int64]bool{},
-		files:  map[int64][]SentFile{},
-		fresh:  map[int64]bool{},
+		agent:   agent,
+		hist:    hist,
+		mem:     mem,
+		cfg:     cfg,
+		system:  system,
+		busy:    map[int64]bool{},
+		files:   map[int64][]SentFile{},
+		fresh:   map[int64]bool{},
+		cancels: map[int64]context.CancelFunc{},
 	}
 	s.loadFresh()
 	s.loadFiles()
@@ -232,6 +244,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/new_chat", s.handleNewChat)
 	mux.HandleFunc("/api/chats", s.handleChats)
 	mux.HandleFunc("/api/fresh", s.handleFresh)
+	mux.HandleFunc("/api/cancel", s.handleCancel)
 	mux.HandleFunc("/api/delete_chats", s.handleDeleteChats)
 	mux.HandleFunc("/api/upload", s.handleUpload)
 	mux.HandleFunc("/api/files", s.handleFiles)
@@ -261,6 +274,40 @@ func userMsg(s string) []*messages.Message {
 	m := &messages.Message{Role: "user"}
 	messages.SetContentString(m, s)
 	return []*messages.Message{m}
+}
+
+// noteMsg membungkus catatan sistem (mis. "dihentikan") sebagai pesan assistant.
+func noteMsg(s string) []*messages.Message {
+	m := &messages.Message{Role: "assistant"}
+	messages.SetContentString(m, s)
+	return []*messages.Message{m}
+}
+
+// handleCancel menghentikan run yang sedang jalan di satu chat slot.
+// Agent menerima ctx cancel: panggilan model dibatalkan dan shell command
+// yang sedang jalan diterminasi (lihat exec.go).
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	var req clearReq
+	_ = readJSON(r, &req)
+	chatID := req.ChatID
+	if chatID == 0 {
+		chatID = DefaultWebChatID
+	}
+	s.cancelsMu.Lock()
+	cancel := s.cancels[chatID]
+	s.cancelsMu.Unlock()
+	s.mu.Lock()
+	running := s.busy[chatID]
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		log.Printf("webui chat %d: user menekan Hentikan", chatID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "chat_id": chatID, "canceled": running})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -421,6 +468,7 @@ type chatResp struct {
 	HistTokens int        `json:"hist_tokens"`
 	ChatID     int64      `json:"chat_id"`
 	DurationMs int64      `json:"duration_ms"`
+	Canceled   bool       `json:"canceled,omitempty"`
 	Files      []SentFile `json:"files,omitempty"`
 }
 
@@ -503,10 +551,44 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// independent context: reload/closing the browser must not kill the run
+	// independent context: reload/closing the browser must not kill the run.
+	// Didaftarkan di s.cancels supaya tombol "Hentikan" (/api/cancel) bisa
+	// membatalkan run ini — termasuk membunuh shell command yang sedang jalan.
 	ctx, cancel := context.WithTimeout(context.Background(), maxRun)
-	defer cancel()
+	s.cancelsMu.Lock()
+	s.cancels[chatID] = cancel
+	s.cancelsMu.Unlock()
+	defer func() {
+		cancel()
+		s.cancelsMu.Lock()
+		delete(s.cancels, chatID)
+		s.cancelsMu.Unlock()
+	}()
 	res := s.agent.ProcessMessage(ctx, text, stored, opts)
+
+	// Dibatalkan user / kehabisan waktu: jawaban setengah jadi jangan
+	// disimpan, tapi pertanyaan user + catatan tetap masuk riwayat supaya
+	// percakapan yang dibatalkan masih tampil di web (dulu hilang).
+	if cerr := ctx.Err(); cerr != nil {
+		note := cancelNote
+		if errors.Is(cerr, context.DeadlineExceeded) {
+			note = timeoutNote
+		}
+		saved := append(append([]*messages.Message{}, stored...), userMsg(text)...)
+		saved = append(saved, noteMsg(note)...)
+		_ = s.hist.Set(chatID, saved)
+		log.Printf("webui chat %d: run dihentikan (%v) setelah %s", chatID, cerr, time.Since(start).Round(time.Millisecond))
+		writeJSON(w, http.StatusOK, chatResp{
+			OK:         true,
+			Canceled:   true,
+			Reply:      note,
+			HistTokens: history.TokenCountFull(sys, saved),
+			Files:      s.newFiles(chatID, filesBefore),
+			ChatID:     chatID,
+			DurationMs: time.Since(start).Milliseconds(),
+		})
+		return
+	}
 
 	// persist (same shape as the CLI path)
 	saved := append(append([]*messages.Message{}, stored...), userMsg(text)...)
