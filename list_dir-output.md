@@ -6,7 +6,7 @@
 
 ```json
 {
-  "path": "/tmp/puru-tools-dump-1146825397"
+  "path": "/tmp/puru-tools-dump-2752331207"
 }
 ```
 
