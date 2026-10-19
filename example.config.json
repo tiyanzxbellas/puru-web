@@ -5,7 +5,8 @@
     "base_url": "https://nirkyy-a.hf.space/v1",
     "api_key": "sk-843e3f05f05eacfe-55n2je-f2c2b844",
     "model": "puru",
-    "temperature": 0
+    "temperature": 0,
+    "max_tokens": 128000
   },
   "workspace": "/data/data/com.termux/files/home/.puru/workspace",
   "restrict_workspace": true,

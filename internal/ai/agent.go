@@ -287,6 +287,7 @@ type requestAgent struct {
 	tools        []tools.Tool
 	functions    []llms.FunctionDefinition
 	temperature  float64
+	maxTokens    int
 	chatTemplate prompts.ChatPromptTemplate
 	loopDelay    time.Duration
 	plans        int
@@ -299,7 +300,7 @@ type requestAgent struct {
 	lastReasoning    string
 }
 
-func newRequestAgent(model llms.Model, system string, history []*messages.Message, toolMap map[string]*Tool, temperature float64, loopDelay time.Duration) *requestAgent {
+func newRequestAgent(model llms.Model, system string, history []*messages.Message, toolMap map[string]*Tool, temperature float64, maxTokens int, loopDelay time.Duration) *requestAgent {
 	conv := toChatHistory(history)
 	if conv == nil {
 		conv = []llms.ChatMessage{}
@@ -310,6 +311,7 @@ func newRequestAgent(model llms.Model, system string, history []*messages.Messag
 		tools:       wrapTools(toolMap),
 		functions:   toFunctionDefinitions(toolMap),
 		temperature: temperature,
+		maxTokens:   maxTokens,
 		history:     conv,
 		loopDelay:   loopDelay,
 		chatTemplate: prompts.NewChatPromptTemplate([]prompts.MessageFormatter{
@@ -357,6 +359,9 @@ func (ra *requestAgent) Plan(
 	}
 
 	callOpts := []llms.CallOption{llms.WithStreamingFunc(noopStream)}
+	if ra.maxTokens > 0 {
+		callOpts = append(callOpts, llms.WithMaxTokens(ra.maxTokens))
+	}
 	if ra.temperature != 0 {
 		callOpts = append(callOpts, llms.WithTemperature(ra.temperature))
 	}
@@ -466,6 +471,14 @@ func (a *Agent) maxSteps() int {
 	return config.DefaultMaxIterations
 }
 
+// maxTokens is the per-call output budget (0 = provider default).
+func (a *Agent) maxTokens() int {
+	if a.Config != nil && a.Config.Model.MaxTokens > 0 {
+		return a.Config.Model.MaxTokens
+	}
+	return 0
+}
+
 func (a *Agent) temperature() float64 {
 	if a.Config != nil {
 		return a.Config.Model.Temperature
@@ -502,7 +515,7 @@ func (a *Agent) runOnce(ctx context.Context, system string, history []*messages.
 		return nil, errNoModel
 	}
 	maxSteps := a.maxSteps()
-	ra := newRequestAgent(a.Client, system, history, toolMap, a.temperature(), a.loopDelay())
+	ra := newRequestAgent(a.Client, system, history, toolMap, a.temperature(), a.maxTokens(), a.loopDelay())
 
 	executor := agents.NewExecutor(ra,
 		agents.WithMaxIterations(maxSteps),

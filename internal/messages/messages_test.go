@@ -96,12 +96,30 @@ func TestEnsureStartsWithUser(t *testing.T) {
 	}
 }
 
-func TestSanitizeTruncatesText(t *testing.T) {
-	big := strings.Repeat("x", 10000)
+// Teks user/assistant (jawaban panjang) TIDAK dipotong di batas tool (8k):
+// satu balasan panjang harus utuh, termasuk setelah reload.
+func TestSanitizeKeepsLongAnswer(t *testing.T) {
+	big := strings.Repeat("x", 60000)
+	got := SanitizeMessage(makeMsg("assistant", big))
+	s, ok := ContentString(got)
+	if !ok {
+		t.Fatal("content string hilang")
+	}
+	if s != big {
+		t.Fatalf("jawaban panjang harus utuh, dapat %d dari %d", len(s), len(big))
+	}
+}
+
+// Di atas MaxStoredText baru dipotong (dengan penanda).
+func TestSanitizeTruncatesVeryLongText(t *testing.T) {
+	big := strings.Repeat("x", MaxStoredText+5000)
 	truncated := SanitizeMessage(makeMsg("user", big))
 	s, ok := ContentString(truncated)
-	if !ok || len(s) > MaxStoredContent+len("\n...[truncated]") {
+	if !ok || len(s) > MaxStoredText+len("\n...[truncated]") {
 		t.Fatalf("sanitize did not truncate: length=%d", len(s))
+	}
+	if !strings.HasSuffix(s, "...[truncated]") {
+		t.Fatal("penanda truncated hilang")
 	}
 }
 

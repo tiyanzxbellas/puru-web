@@ -12,7 +12,15 @@ import (
 	"strings"
 )
 
+// MaxStoredContent caps TOOL payloads (tool-call args, tool results) so big
+// dumps (dump dex, log panjang, HTML) tidak menumpuk di transkrip.
 const MaxStoredContent = 8000
+
+// MaxStoredText caps user/assistant TEXT. Jawaban panjang adalah inti asisten,
+// jadi batasnya tinggi: satu balasan panjang (esai, kode, dokumen) tersimpan
+// utuh dan tetap utuh setelah halaman di-reload. Token tetap dijaga oleh
+// compaction (history_token_limit), bukan oleh pemotongan karakter.
+const MaxStoredText = 200000
 
 // Part is a single content part of a message. It is kept as a raw map so all
 // provider-specific fields survive a round-trip through storage.
@@ -467,16 +475,19 @@ func isEmptyStub(m *Message) bool {
 }
 
 func truncateString(s string, max int) string {
-	if len(s) > max {
-		return s[:max] + "\n...[truncated]"
+	if len(s) <= max {
+		return s
 	}
-	return s
+	cut := s[:max]
+	// jangan potong di tengah rune UTF-8 (emoji/aksen jadi rusak)
+	cut = strings.ToValidUTF8(cut, "")
+	return cut + "\n...[truncated]"
 }
 
 func SanitizeMessage(m *Message) *Message {
 	c := cloneMessage(m)
 	if s, ok := ContentString(c); ok {
-		SetContentString(c, truncateString(s, MaxStoredContent))
+		SetContentString(c, truncateString(s, MaxStoredText))
 		return c
 	}
 	if IsParts(c) {
@@ -486,7 +497,7 @@ func SanitizeMessage(m *Message) *Message {
 			p := &parts[i]
 			switch p.Type() {
 			case "text":
-				p.SetText(truncateString(p.Text(), MaxStoredContent))
+				p.SetText(truncateString(p.Text(), MaxStoredText))
 			case "reasoning", "reasoning-file":
 				if t := p.Str("text"); t != "" {
 					p.SetText(truncateString(t, MaxStoredContent))

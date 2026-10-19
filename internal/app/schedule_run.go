@@ -68,12 +68,14 @@ func (a *App) RunScheduledJob(ctx context.Context, job schedule.Job) error {
 		return nil
 	}
 	full := header + text
-	if len(full) > maxMessageLength {
-		_ = a.tg.SendFile(ctx, job.ChatID, "schedule.md", []byte(full), "Scheduled task output.")
-		return nil
+	// Output panjang dipecah jadi beberapa pesan, bukan dikirim sebagai file.
+	parts := splitForTelegram(full, telegramChunkRunes)
+	for _, part := range parts {
+		if _, err := a.tg.SendMessage(ctx, job.ChatID, part, nil); err != nil {
+			return err
+		}
 	}
-	_, err := a.tg.SendMessage(ctx, job.ChatID, full, nil)
-	return err
+	return nil
 }
 
 // FormatScheduleList renders jobs for /sched output.

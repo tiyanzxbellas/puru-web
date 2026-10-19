@@ -171,6 +171,8 @@ docker run -d \
 | `restrict_workspace` | `bool` | Prevents the AI from accessing files outside the workspace. |
 | `exec_memory_mb` | `int` | Hard RAM limit for executed shell processes. |
 | `timezone` | `string` | IANA timezone for schedules (default `Asia/Jakarta`). |
+| `model.max_tokens` | `int` | Output budget per call (kirim sebagai `max_tokens`). Kosong/`0` = pakai default provider. Isi `128000` biar jawaban panjang tidak kepotong. |
+| `history_token_limit` | `int` | Batas token konteks sebelum riwayat diringkas (compaction). Default `30000`. |
 
 ---
 
@@ -318,6 +320,53 @@ bikin gambar kucing astronot pakai helm neon, gaya digital art, 768px
   Contoh: `"cyberpunk street food stall at night, neon signs, rain, cinematic"`.
 - Kalau endpoint publiknya sedang mati, agent lapor apa adanya (atau tawarkan
   gambar buatan ImageMagick — teks/bentuk, bukan AI).
+
+### 📝 Jawaban panjang (tidak kepotong)
+
+Puru **tidak memotong jawaban** di batas karakter. Satu balasan bisa sepanjang
+apa pun selama masih di dalam anggaran token:
+
+| Lapisan | Batas lama | Sekarang |
+| :--- | :--- | :--- |
+| `max_tokens` ke provider | tidak dikirim → default provider (sering kecil, `finish_reason: length`) | dari config `model.max_tokens` (mis. `128000`) |
+| teks user/assistant disimpan | 8.000 karakter | **200.000 karakter** (`messages.MaxStoredText`) |
+| hasil tool (dump, log, HTML) | 8.000 karakter | tetap 8.000 (`messages.MaxStoredContent`) — biar transkrip tidak membengkak |
+| balasan Telegram | > 4096 char dikirim sebagai `response.md` | **dipecah jadi beberapa pesan** (`splitForTelegram`, potong di baris/spasi, aman UTF-8) |
+| balasan web | utuh di bubble | utuh, termasuk setelah reload |
+
+Cara pakai:
+
+1. Isi `model.max_tokens` di config dengan `maxOutput` model (cek
+   `GET /v1/models` → `capabilities.maxOutput`). Untuk model `puru` di
+   endpoint contoh = `128000`.
+2. Kalau riwayat sudah panjang, compaction (`history_token_limit`) yang
+   meringkas — bukan pemotongan teks. Jadi jawaban yang sudah terkirim tetap
+   utuh tersimpan.
+
+Contoh config:
+
+```json
+{
+  "model": {
+    "base_url": "https://.../v1",
+    "api_key": "sk-...",
+    "model": "puru",
+    "temperature": 0,
+    "max_tokens": 128000
+  },
+  "history_token_limit": 150000
+}
+```
+
+Catatan: `max_tokens` besar **tidak** berarti model akan menulis sepanjang itu —
+dia berhenti saat jawabannya selesai (`finish_reason: stop`). Nilai ini cuma
+mencegah provider memotong di tengah kalimat.
+
+⚠️ Jaga anggaran konteks: `history_token_limit + model.max_tokens` harus di
+bawah `contextWindow` model. Untuk model dengan `contextWindow` 200000 dan
+`maxOutput` 128000, pakai `history_token_limit` ≤ `60000` (60000 + 128000 =
+188000 < 200000). Kalau kelewat, provider bisa menolak request karena konteks
+penuh.
 
 ### 🌍 Biar bisa dibuka orang lain / dari internet
 

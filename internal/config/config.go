@@ -48,6 +48,10 @@ type ModelConfig struct {
 	APIKey      string  `json:"api_key"`
 	Model       string  `json:"model"`
 	Temperature float64 `json:"temperature"`
+	// MaxTokens is the output budget sent as max_tokens on every call.
+	// 0 = jangan kirim (pakai default provider). Isi dengan maxOutput model
+	// (mis. 128000) supaya jawaban panjang tidak kepotong default provider.
+	MaxTokens int `json:"max_tokens,omitempty"`
 }
 
 // AIStudioSearchConfig is the third-party web_search provider via Google
@@ -170,7 +174,7 @@ type Config struct {
 	// WebSearch groups third-party web_search providers. Optional: when
 	// absent or inactive, the web_search tool is removed from the tool list.
 	WebSearch WebSearchConfig `json:"web_search"`
-	ConfigDir string `json:"-"`
+	ConfigDir string          `json:"-"`
 }
 
 // DefaultDir returns $HOME/.puru (/root/.puru for root).

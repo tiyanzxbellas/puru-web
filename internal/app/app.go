@@ -26,6 +26,11 @@ import (
 
 const maxMessageLength = 4096
 
+// telegramChunkRunes is the per-message character budget used when a long
+// answer is split. Slightly under 4096 so markdown/entity overhead never
+// trips Telegram's limit.
+const telegramChunkRunes = 4000
+
 // Status texts for the shared thinking message lifecycle:
 // "thinking" -> "compacting" (during summarize) -> "thinking" (agent run).
 const (
@@ -587,12 +592,60 @@ func (a *App) safeReply(ctx context.Context, msg *telegram.Message, text string,
 	})
 }
 
+// safeSend delivers the whole answer. Long answers are split at line/word
+// boundaries and sent as consecutive messages, so nothing is cut off and the
+// user never has to open a response.md file to read the reply.
 func (a *App) safeSend(ctx context.Context, msg *telegram.Message, text string) error {
-	if len(text) > maxMessageLength {
-		_ = a.safeReply(ctx, msg, "⚠️ Response too long, sent as a file.", false)
-		return a.tg.SendFile(ctx, msg.Chat.ID, "response.md", []byte(text), "Full response.")
+	parts := splitForTelegram(text, telegramChunkRunes)
+	for i, part := range parts {
+		if err := a.safeReply(ctx, msg, part, i == 0); err != nil {
+			return err
+		}
 	}
-	return a.safeReply(ctx, msg, text, true)
+	return nil
+}
+
+// splitForTelegram splits text into chunks of at most limit runes, preferring
+// line breaks, then spaces, so markdown blocks are not cut mid-line. Runes are
+// used so emoji/UTF-8 never get chopped in half.
+func splitForTelegram(text string, limit int) []string {
+	r := []rune(text)
+	if len(r) <= limit {
+		return []string{text}
+	}
+	var out []string
+	for len(r) > limit {
+		cut := limit
+		for i := limit - 1; i > limit/2; i-- {
+			if r[i] == '\n' {
+				cut = i
+				break
+			}
+		}
+		if cut == limit {
+			for i := limit - 1; i > limit/2; i-- {
+				if r[i] == ' ' {
+					cut = i
+					break
+				}
+			}
+		}
+		piece := strings.TrimRight(string(r[:cut]), "\n ")
+		if piece != "" {
+			out = append(out, piece)
+		}
+		r = r[cut:]
+		for len(r) > 0 && (r[0] == '\n' || r[0] == ' ') {
+			r = r[1:]
+		}
+	}
+	if s := strings.TrimSpace(string(r)); s != "" {
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return []string{text}
+	}
+	return out
 }
 
 func (a *App) withMarkdownFallback(fn func(parseMode string) error) error {
