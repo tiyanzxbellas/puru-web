@@ -219,12 +219,16 @@ Repo ini menyuntik **ATURAN-PURU.md** ke system prompt setiap request.
   di **semua channel** (web, Telegram, CLI), tepat setelah `AGENTS.md`.
 - **Auto-seed** — file-nya hilang? dibuat ulang dari
   `internal/workspace/defaults/ATURAN-PURU.md` (file yang sudah ada tidak pernah ditimpa).
-- **Mode fresh** — *Chat baru* / *Hapus riwayat* / tombol 🧠 **Memori ↔ Fresh** →
-  run tanpa `memory/MEMORY.md` dan tanpa ringkasan konteks. Identitas (AGENTS/SOUL/USER)
-  + katalog skill tetap aktif.
-- **Cukup tombol** — di web tidak perlu mengetik kata kunci apa pun. Tombol **Chat baru**
-  (atau *Hapus riwayat*, atau tombol 🧠 **Memori ↔ Fresh**) langsung memulai percakapan
-  dari nol — persis aturan di ATURAN-PURU.md pasal *Mode fresh*.
+- **Mode fresh** — *Chat baru* / *Hapus riwayat* → run tanpa `memory/MEMORY.md` dan
+  tanpa ringkasan konteks. Identitas (AGENTS/SOUL/USER) + katalog skill tetap aktif.
+- **Cukup tombol** — di web tidak perlu mengetik kata kunci apa pun (kata `fresh` biasa
+  dikirim ke AI seperti pesan lain). Tombol **Chat baru** (➕) atau *Hapus riwayat* (🗑)
+  langsung memulai percakapan dari nol — persis aturan di ATURAN-PURU.md pasal *Mode fresh*.
+- **Hapus riwayat satuan & massal** — semua riwayat ada di sidebar. **Tekan lama**
+  (± setengah detik) satu item riwayat → menu: *Hapus riwayat ini* atau *Hapus beberapa…*.
+  Mode pilih-banyak punya tombol **Semua** + **Hapus (n)**, jadi bersihin riwayat nggak
+  perlu buka chatnya satu per satu. Slot yang sedang diproses otomatis dilewati, dan
+  tiap hapus selalu disalin dulu ke `<historydir>/.trash/` (masih bisa dipulihkan).
 - **CLI** — `puru chat` memakai loader workspace yang sama, jadi aturannya ikut terbaca juga.
 
 Isi file bebas diedit (bahasa aturan mas sendiri). Selama file-nya ada di workspace,
@@ -280,7 +284,7 @@ Telegram) — semuanya lewat tool `telegram_sendfile` (maks 49 MB/berkas).
 Contoh perintah yang jalan di web:
 - "unduh video TikTok <link> terus kirim ke chat ini"
 - "download lagu YouTube <link> jadi MP3, kirim ke chat" ← `yt-dlp -x --audio-format mp3` lalu `telegram_sendfile`
-- "bikin gambar dari <url> terus kirim"
+- "bikin gambar kucing astronot neon, kirim ke chat" ← skill `image-gen` (pollinations)
 - "zip folder project jadi project.zip terus kirim"
 - "bikin arsip 7z dari 3 file itu, kirim ke chat" ← `7z a -t7z` (7-Zip 26.04 ada di Termux)
 
@@ -290,6 +294,30 @@ Telegram menolak, otomatis fallback jadi dokumen biasa.
 
 **Kalau videonya kegedean (>49 MB):** agent bisa menurunkan resolusi /
 kompres dulu, atau kirim sebagai link unduh (`downloads/` tetap sumbernya).
+
+### 🖼️ Bikin gambar dari teks (tanpa API key)
+
+Puru di web bisa **membuat gambar** dari deskripsi — sama seperti di Telegram,
+tanpa API key dan tanpa biaya. Mesinnya endpoint publik
+`image.pollinations.ai` (skill `image-gen` di workspace).
+
+```bash
+# di chat web cukup bilang:
+bikin gambar kucing astronot pakai helm neon, gaya digital art, 768px
+```
+
+- Agent jalanin `skills/image-gen/scripts/gen_image.sh "<prompt>" [out.jpg]`
+  (URL-encode prompt, **retry otomatis** kalau kena rate limit, validasi file JPEG),
+  lalu kirim hasilnya lewat `telegram_sendfile` → muncul sebagai **pratinjau gambar**
+  di bubble jawaban + tombol ⬇ unduh.
+- Opsi: `--size 256..2048` (default 1024), `--seed <angka>` (seed sama = gambar sama),
+  `--model <nama>` (lihat `GET image.pollinations.ai/models`).
+- **Batas gratis: 1 gambar / 45 detik per IP** (balasan HTTP 402 `FREE_LIMIT`) —
+  script-nya otomatis nunggu lalu coba lagi. Ukuran hasil biasanya 30–200 KB.
+- Prompt bahasa Inggris lebih akurat: *subjek + aksi + gaya + pencahayaan*.
+  Contoh: `"cyberpunk street food stall at night, neon signs, rain, cinematic"`.
+- Kalau endpoint publiknya sedang mati, agent lapor apa adanya (atau tawarkan
+  gambar buatan ImageMagick — teks/bentuk, bukan AI).
 
 ### 🌍 Biar bisa dibuka orang lain / dari internet
 
