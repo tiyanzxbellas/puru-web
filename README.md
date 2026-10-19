@@ -222,7 +222,8 @@ Repo ini menyuntik **ATURAN-PURU.md** ke system prompt setiap request.
 - **Mode fresh** — *Chat baru* / *Hapus riwayat* / tombol 🧠 **Memori ↔ Fresh** →
   run tanpa `memory/MEMORY.md` dan tanpa ringkasan konteks. Identitas (AGENTS/SOUL/USER)
   + katalog skill tetap aktif.
-- **Ketik `fresh`** di kolom chat (kata tunggal, juga `/fresh` atau `/new`) = percakapan baru
+- **Cukup tombol** — di web tidak perlu mengetik kata kunci apa pun. Tombol **Chat baru**
+  (atau *Hapus riwayat*, atau tombol 🧠 **Memori ↔ Fresh**) langsung memulai percakapan
   dari nol — persis aturan di ATURAN-PURU.md pasal *Mode fresh*.
 - **CLI** — `puru chat` memakai loader workspace yang sama, jadi aturannya ikut terbaca juga.
 

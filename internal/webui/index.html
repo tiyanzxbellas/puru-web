@@ -462,7 +462,7 @@ footer{padding:12px 14px calc(14px + env(safe-area-inset-bottom));background:lin
         <button id="btn-attach" title="Lampirkan file" aria-label="Lampirkan file">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.4 3.4 0 014.8 4.8l-8.6 8.6a1.8 1.8 0 01-2.5-2.5l7.9-7.9"/></svg>
         </button>
-        <textarea id="input" rows="1" placeholder="Tulis pesan… (ketik 'fresh' = mulai dari awal)"></textarea>
+        <textarea id="input" rows="1" placeholder="Tulis pesan…"></textarea>
         <button id="send" title="Kirim" aria-label="Kirim">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12h13M12 5.5l6.5 6.5-6.5 6.5"/></svg>
         </button>
@@ -974,13 +974,6 @@ async function clearChat(){
 async function sendMsg(text){
   text = (text || "").trim();
   if((!text && !attachments.length) || busy) return;
-  // ATURAN-PURU.md: ketik "fresh" = percakapan baru seperti dari awal.
-  const low = text.toLowerCase();
-  if(!attachments.length && (low === "fresh" || low === "/fresh" || low === "/new")){
-    input.value = ""; autosize();
-    await newChat();
-    return;
-  }
   const payload = withAttachments(text);
   busy = true; send.disabled = true;
   const myGen = ++gen;
