@@ -7,7 +7,7 @@
 ```json
 {
   "content": "LINE-DUA",
-  "path": "/tmp/puru-tools-dump-2519187586/hello.txt",
+  "path": "/tmp/puru-tools-dump-404171869/hello.txt",
   "start_line": 2
 }
 ```
@@ -15,5 +15,5 @@
 ## output
 
 ```
-File edited: /tmp/puru-tools-dump-2519187586/hello.txt
+File edited: /tmp/puru-tools-dump-404171869/hello.txt
 ```
